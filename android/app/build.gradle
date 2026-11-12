@@ -1,0 +1,33 @@
+plugins { id 'com.android.application' }
+
+android {
+    namespace 'pl.zdaze.app'
+    compileSdk 34
+    defaultConfig {
+        applicationId 'pl.zdaze.app'
+        minSdk 26
+        targetSdk 34
+        versionCode Integer.parseInt(System.getenv('VERSION_CODE') ?: '1')
+        versionName "1.0." + (System.getenv('VERSION_CODE') ?: '0')
+    }
+    // Stały klucz podpisu => kolejne APK instalują się jako aktualizacja.
+    // Jeśli w GitHub Secrets jest KEYSTORE_BASE64 – workflow podmienia ten plik na Twój.
+    signingConfigs {
+        release {
+            storeFile file('zdaze.keystore')
+            storePassword System.getenv('KEYSTORE_PASSWORD') ?: 'zdaze123'
+            keyAlias System.getenv('KEY_ALIAS') ?: 'zdaze'
+            keyPassword System.getenv('KEY_PASSWORD') ?: 'zdaze123'
+        }
+    }
+    buildTypes {
+        release { minifyEnabled false; signingConfig signingConfigs.release }
+        debug { signingConfig signingConfigs.release }
+    }
+    // Aplikacja webowa (../../web) jest pakowana jako assets – jedno źródło kodu UI
+    sourceSets { main { assets.srcDirs = ['../../web'] } }
+    lint { abortOnError false; checkReleaseBuilds false }
+    compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+}
+
+dependencies { implementation 'androidx.webkit:webkit:1.11.0' }
