@@ -219,6 +219,29 @@ public class MainActivity extends Activity {
             runOnUiThread(() -> { try { startActivity(i); } catch (Exception ignored) {} });
         }
 
+        /**
+         * Budzik w aplikacji Zegar na konkretny moment. Zegar przyjmuje tylko godzinę (bez daty)
+         * i ustawia najbliższe jej wystąpienie – to wystarcza, gdy budzik jest w ciągu 24 h.
+         * Dla późniejszego terminu przekazujemy dzień tygodnia (Zegar tworzy wtedy budzik
+         * powtarzany w ten dzień – jedyny sposób, by trafić we właściwy dzień).
+         */
+        @JavascriptInterface
+        public void systemAlarmAt(double ts, String msg) {
+            java.util.Calendar c = java.util.Calendar.getInstance();
+            c.setTimeInMillis((long) ts);
+            Intent i = new Intent(AlarmClock.ACTION_SET_ALARM)
+                    .putExtra(AlarmClock.EXTRA_HOUR, c.get(java.util.Calendar.HOUR_OF_DAY))
+                    .putExtra(AlarmClock.EXTRA_MINUTES, c.get(java.util.Calendar.MINUTE))
+                    .putExtra(AlarmClock.EXTRA_MESSAGE, msg)
+                    .putExtra(AlarmClock.EXTRA_SKIP_UI, false);
+            if ((long) ts - System.currentTimeMillis() > 24L * 3600 * 1000) {
+                ArrayList<Integer> days = new ArrayList<>();
+                days.add(c.get(java.util.Calendar.DAY_OF_WEEK));
+                i.putIntegerArrayListExtra(AlarmClock.EXTRA_DAYS, days);
+            }
+            runOnUiThread(() -> { try { startActivity(i); } catch (Exception ignored) {} });
+        }
+
         @JavascriptInterface
         public void keepAwake(final boolean on) {
             runOnUiThread(() -> {

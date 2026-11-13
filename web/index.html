@@ -330,7 +330,8 @@ async function armPlan(){
   const d=new Date(at);
   $('pAlarmOpts').innerHTML=`<div class="card"><b>Budzik w aplikacji ustawiony na ${hhmm(at)}.</b>
    ${N?`<p class="mut">Aplikacja uruchomi się sama o tej godzinie – nawet gdy telefon jest zablokowany. Możesz dodatkowo ustawić budzik w zegarze:</p>
-   <button style="width:100%;margin:4px 0" onclick="N.systemAlarm(${d.getHours()},${d.getMinutes()},'Zdążę! – start')">⏰ Dodaj też do aplikacji Zegar</button>`:`<p class="mut">Zostaw aplikację otwartą (ekran nie zgaśnie, telefon najlepiej na ładowarce). Dla pewności dodaj też budzik systemowy:</p>
+   <button style="width:100%;margin:4px 0" onclick="N.systemAlarmAt(${at},'Zdążę! – start ${d.toLocaleDateString('pl',{weekday:'long',day:'numeric',month:'numeric'})}')">⏰ Dodaj też do aplikacji Zegar (${d.toLocaleDateString('pl',{weekday:'long'})} ${hhmm(at)})</button>
+   ${at-Date.now()>864e5?`<p class="mut" style="font-size:13px">⚠️ Zegar nie przyjmuje daty, tylko dzień tygodnia – utworzy budzik <b>powtarzany co ${d.toLocaleDateString('pl',{weekday:'long'})}</b>. Wyłącz go po użyciu albo dodaj go dopiero w przeddzień (w ciągu 24 h przed budzikiem będzie jednorazowy).</p>`:''}`:`<p class="mut">Zostaw aplikację otwartą (ekran nie zgaśnie, telefon najlepiej na ładowarce). Dla pewności dodaj też budzik systemowy:</p>
    <a href="intent:#Intent;action=android.intent.action.SET_ALARM;i.android.intent.extra.alarm.HOUR=${d.getHours()};i.android.intent.extra.alarm.MINUTES=${d.getMinutes()};S.android.intent.extra.alarm.MESSAGE=${encodeURIComponent('Zdążę! – start')};B.android.intent.extra.alarm.SKIP_UI=false;end"><button style="width:100%;margin:4px 0">⏰ Budzik systemowy (Android)</button></a>
    <button style="width:100%;margin:4px 0" onclick="downloadIcs()">📅 Przypomnienie w kalendarzu (.ics)</button>`}
    <button class="ghost" style="width:100%" onclick="disarm()">Anuluj budzik</button></div>`;
