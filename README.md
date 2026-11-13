@@ -11,7 +11,7 @@ Trzy tryby:
 1. Utwórz repozytorium na GitHubie i wypchnij do niego ten katalog.
 2. Każdy push na `main` uruchamia workflow **Build Android APK**:
    - APK trafia do **Releases** (np. `v1.0.5`) oraz do artefaktów przebiegu,
-   - wersja webowa (PWA) trafia na GitHub Pages (jeśli w *Settings → Pages* ustawisz źródło „GitHub Actions”).
+   - wersja webowa (PWA): włącz *Settings → Pages → Source: GitHub Actions* i uruchom ręcznie workflow „Deploy web”.
 3. Na telefonie otwórz stronę Releases, pobierz `zdaze-N.apk` i zainstaluj (zezwól na instalację z nieznanych źródeł).
 
 Kolejne wersje instalują się jako aktualizacje, bo APK jest zawsze podpisany tym samym kluczem (`android/app/zdaze.keystore`).
