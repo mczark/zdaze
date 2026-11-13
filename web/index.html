@@ -348,7 +348,7 @@ document.addEventListener('visibilitychange',()=>{if(document.visibilityState===
 function startRun(fromAlarm){
   const sch=schedule();if(!sch.length)return toast('Plan jest pusty');
   const now=Date.now();
-  S.run={items:sch.map(i=>({taskId:i.taskId,sec:i.sec})),idx:0,taskStart:now,deadline:fromAlarm?deadlineTs():now+planTotal()*1000,warned:false,announced:!fromAlarm,asking:false,started:now};
+  S.run={items:sch.map(i=>({taskId:i.taskId,sec:i.sec})),idx:0,taskStart:now,deadline:fromAlarm?deadlineTs():now+planTotal()*1000,warned:false,half:false,announced:!fromAlarm,asking:false,started:now};
   S.plan.armed=false;save();requestWake();go('guard');renderGuard();
   if(fromAlarm){startRing();if(!N)try{new Notification('Zdążę! – pobudka',{body:'Czas zacząć: '+curName()})}catch(e){}}else announce()}
 const curName=()=>{const it=S.run&&S.run.items[S.run.idx];const t=it&&S.tasks.find(x=>x.id===it.taskId);return t?t.name:'zadanie'};
@@ -357,7 +357,7 @@ function guardDone(){if(!S.run||S.run.asking)return;nextTask(true)}
 function nextTask(manual){const r=S.run;const it=r.items[r.idx];const actual=(Date.now()-r.taskStart)/1000;
   if(manual&&S.settings.learn&&actual>5){const t=S.tasks.find(x=>x.id===it.taskId);if(t)t.samples.push({sec:Math.round(actual),ts:Date.now(),src:'guard'})}
   if(!manual)beepLong();else tone(660,.2);
-  r.idx++;r.taskStart=Date.now();r.warned=false;save();
+  r.idx++;r.taskStart=Date.now();r.warned=false;r.half=false;save();
   if(r.idx>=r.items.length){askFinish();return}
   setTimeout(announce,manual?300:1800);renderGuard()}
 function askFinish(){const r=S.run;r.asking=true;r.finished=Date.now();save();renderGuard();
@@ -440,6 +440,7 @@ function tick(){const now=Date.now();
       const arc=$('arc');if(arc){arc.style.strokeDashoffset=678.6*Math.min(1,el/Math.max(1,it.sec));arc.style.stroke=left<=30?'var(--warn)':'var(--acc)'}
       const rest=r.items.slice(r.idx+1).reduce((a,x)=>a+x.sec,0);const proj=now+Math.max(0,left)*1000+rest*1000;const sl=Math.round((r.deadline-proj)/60000);
       const gs=$('gSlack');if(gs)gs.innerHTML=sl>=0?`<span style="color:var(--ok)">Zapas: ${sl} min</span>`:`<span style="color:var(--bad)">Opóźnienie: ${-sl} min</span>`}
+    if(!r.half&&el>=it.sec/2&&it.sec>=80){r.half=true;save();say('Połowa czasu')}
     if(!r.warned&&left<=30&&it.sec>35){r.warned=true;save();beep3()}
     if(left<=0)nextTask(false)}
 }
