@@ -29,6 +29,7 @@ h2{font-size:18px;margin:16px 0 4px}
 nav{position:fixed;left:0;right:0;bottom:0;display:flex;background:#0b1222;border-top:1px solid #1e293b;padding-bottom:env(safe-area-inset-bottom);z-index:5}
 nav button{flex:1;background:none;border-radius:0;padding:10px 0 12px;color:var(--mut);font-size:12px;display:flex;flex-direction:column;align-items:center;gap:2px}
 nav button span{font-size:22px}nav button.on{color:var(--acc)}
+.fab.fab2{bottom:calc(162px + env(safe-area-inset-bottom));width:52px;height:52px;right:24px;font-size:24px;background:var(--card2)}
 .fab{position:fixed;right:18px;bottom:calc(86px + env(safe-area-inset-bottom));width:64px;height:64px;border-radius:50%;font-size:34px;background:var(--acc);color:#04263a;box-shadow:0 6px 20px #0008;z-index:4}
 .task{display:flex;align-items:center;gap:12px}
 .ss{width:68px;height:68px;border-radius:50%;flex:none;font-weight:700;font-size:15px;background:var(--ok);color:#052e12}
@@ -71,7 +72,7 @@ nav button span{font-size:22px}nav button.on{color:var(--acc)}
 
 <!-- ZBIERANIE DANYCH -->
 <section class="view" id="v-data">
-  <p class="mut">Dotknij <b>+</b> i powiedz nazwę zadania. Duży przycisk przy zadaniu = start / stop pomiaru. Głosem: „nowe zadanie prysznic”, „start prysznic”, „stop”.</p>
+  <p class="mut">Dotknij <b>+</b> i powiedz nazwę zadania. Duży przycisk przy zadaniu = start / stop pomiaru. <b>🚗</b> = dojazd z przystankami. Głosem: „nowe zadanie prysznic”, „nowy dojazd”, „start prysznic”, „stop”.</p>
   <div id="tasks"></div>
 </section>
 
@@ -91,7 +92,8 @@ nav button span{font-size:22px}nav button.on{color:var(--acc)}
 <!-- PILNOWANIE -->
 <section class="view" id="v-guard"><div id="guard"></div></section>
 
-<button class="fab" id="fab" onclick="newTaskVoice()">+</button>
+<button class="fab" id="fab" onclick="newTaskVoice()" title="Nowa czynność (głosowo)">+</button>
+<button class="fab fab2" id="fab2" onclick="openTravel(null)" title="Nowy dojazd">🚗</button>
 
 <nav>
   <button data-v="home" class="on"><span>🏠</span>Start</button>
@@ -113,6 +115,7 @@ const def={tasks:[],plan:{deadline:'07:45',date:'',items:[],armed:false,alarmAt:
   settings:{apiKey:'',estimate:'avg',buffer:10,learn:true,lang:'pl-PL'},running:null};
 let S;try{S=Object.assign(structuredClone(def),JSON.parse(localStorage.getItem(LS)||'{}'))}catch(e){S=structuredClone(def)}
 S.settings=Object.assign({},def.settings,S.settings);S.plan=Object.assign({},def.plan,S.plan);
+S.tasks.forEach(t=>{if(!t.type)t.type=t.maps?'travel':'activity';if(t.maps&&!t.maps.stops)t.maps.stops=[]});
 const save=()=>{try{localStorage.setItem(LS,JSON.stringify(S))}catch(e){}};
 const $=id=>document.getElementById(id);
 const uid=()=>Math.random().toString(36).slice(2,9);
@@ -180,6 +183,7 @@ function pauseCmd(){cmdPaused=true;stopCmd()}function resumeCmd(){cmdPaused=fals
 function findTask(q){q=q.trim();if(!q)return null;return S.tasks.find(t=>t.name.toLowerCase()===q)||S.tasks.find(t=>t.name.toLowerCase().includes(q)||q.includes(t.name.toLowerCase()))}
 function handleCmd(t){
   let m;
+  if(/^(nowy|dodaj) dojazd/.test(t)){openTravel(null);return}
   if(m=t.match(/^(nowe|dodaj) zadanie\s*(.*)$/)){const n=m[2].trim();if(n){addTask(n);toast('Dodano: '+n)}else newTaskVoice();return}
   if(m=t.match(/^(start|zacznij|rozpocznij|startuj)\s*(.*)$/)){const tk=findTask(m[2])||(m[2]?null:lastTask());if(tk){startTimer(tk.id);say('Start '+tk.name)}else toast('Nie znam zadania: '+m[2]);return}
   if(/^(stop|koniec|zakończ|gotowe|stój)/.test(t)){
@@ -191,7 +195,7 @@ const lastTask=()=>S.tasks.slice().sort((a,b)=>(b.used||0)-(a.used||0))[0];
 function spokenDur(s){s=Math.round(s);const m=Math.floor(s/60),x=s%60;return (m?m+' min ':'')+(x?x+' s':'')||'0 s'}
 
 /* ========== ZADANIA I POMIARY ========== */
-function addTask(name){const t={id:uid(),name:name.charAt(0).toUpperCase()+name.slice(1),samples:[],maps:null,used:Date.now()};S.tasks.unshift(t);save();renderTasks();renderPlan();return t}
+function addTask(name){const t={id:uid(),type:'activity',name:name.charAt(0).toUpperCase()+name.slice(1),samples:[],maps:null,used:Date.now()};S.tasks.unshift(t);save();renderTasks();renderPlan();return t}
 async function newTaskVoice(){
   audio();
   let name=HAS_SR?await listenOnce('Powiedz nazwę zadania'):null;
@@ -208,45 +212,87 @@ function stopTimer(){if(!S.running)return 0;const sec=(Date.now()-S.running.star
 const beepShort=()=>tone(990,.12);
 function toggleTimer(id){S.running&&S.running.id===id?stopTimer():startTimer(id)}
 function renderTasks(){
-  const el=$('tasks');if(!S.tasks.length){el.innerHTML='<div class="card mut" style="text-align:center;padding:30px">Brak zadań. Dotknij <b>+</b> i powiedz np. „prysznic”.</div>';return}
+  const el=$('tasks');if(!S.tasks.length){el.innerHTML='<div class="card mut" style="text-align:center;padding:30px">Brak zadań. Dotknij <b>+</b> i powiedz nazwę czynności (np. „prysznic”) albo <b>🚗</b>, aby zdefiniować dojazd.</div>';return}
   el.innerHTML=S.tasks.map(t=>{const run=S.running&&S.running.id===t.id;const e=estimate(t);
     return `<div class="card task"><button class="ss ${run?'run':''}" onclick="toggleTimer('${t.id}')">${run?'<span data-live>0:00</span><br>STOP':'START'}</button>
-    <div class="grow" onclick="openTask('${t.id}')"><div style="font-weight:600">${esc(t.name)}</div>
+    <div class="grow" onclick="openTask('${t.id}')"><div style="font-weight:600">${t.type==='travel'?'🚗 ':''}${esc(t.name)}</div>
     <div class="mut">${t.samples.length?`szac. ${fmtMin(e)} · ${t.samples.length} pomiar${t.samples.length===1?'':'ów'}`:'brak pomiarów'}</div>
-    ${t.maps?`<span class="pill">🗺️ ${esc(t.maps.mode)}</span>`:''}</div><button class="ghost" onclick="openTask('${t.id}')">›</button></div>`}).join('')}
+    ${t.type==='travel'&&t.maps?`<div class="mut" style="font-size:12px">${esc(routeSummary(t.maps))}</div>`:''}</div><button class="ghost" onclick="openTask('${t.id}')">›</button></div>`}).join('')}
+const MODES=[['DRIVE','🚗 Samochód'],['TRANSIT','🚌 Komunikacja'],['WALK','🚶 Pieszo'],['BICYCLE','🚲 Rower'],['TWO_WHEELER','🛵 Skuter/motocykl']];
+const DAYS=['Niedziela','Poniedziałek','Wtorek','Środa','Czwartek','Piątek','Sobota'];
+const short=a=>String(a||'?').split(',')[0];
+function routeSummary(m){return [short(m.origin),...(m.stops||[]).map(s=>short(s.addr)+(s.stay?` (${s.stay} min)`:'')),short(m.dest)].join(' → ')}
+function samplesHtml(t){return `<h2>Pomiary</h2><div class="mut">Szacunek do planu: <b>${fmtMin(estimate(t))}</b> (metoda: ${S.settings.estimate}, zapas ${S.settings.buffer}%)</div>
+  <div>${t.samples.slice().reverse().map((s,i)=>{const j=t.samples.length-1-i;return `<div class="pitem"><span class="grow">${fmtDur(s.sec)} <span class="pill">${s.src==='maps'?'🗺️ Maps':s.src==='manual'?'ręcznie':s.src==='guard'?'pilnowanie':'stoper'}</span></span><span class="mut">${new Date(s.ts).toLocaleDateString('pl')}</span><button class="ghost" onclick="delSample('${t.id}',${j})">✕</button></div>`}).join('')||'<p class="mut">Brak – użyj przycisku START na liście'+(t.type==='travel'?' lub pobierz czas z Google Maps':'')+'.</p>'}</div>
+  <div class="row"><input id="tManual" type="number" min="0" step="0.5" placeholder="min" class="grow"><button onclick="addManual('${t.id}')">Dodaj ręcznie</button></div>`}
+function openTask(id){const t=S.tasks.find(x=>x.id===id);if(!t)return;t.type==='travel'?openTravel(id):openActivity(id)}
+function reopen(id){const t=S.tasks.find(x=>x.id===id);if(t&&t.type==='travel'&&TD&&TD.id===id){travelRead();renderTravel()}else openTask(id)}
 
-function openTask(id){const t=S.tasks.find(x=>x.id===id);if(!t)return;const m=t.maps||{origin:'',dest:'',mode:'DRIVE',day:'1',time:'07:30'};
-  sheet(`<div class="row"><input id="tName" value="${esc(t.name)}" class="grow"><button onclick="renameVoice('${id}')">🎤</button></div>
-  <h2>Pomiary</h2><div class="mut">Szacunek do planu: <b>${fmtMin(estimate(t))}</b> (metoda: ${S.settings.estimate}, zapas ${S.settings.buffer}%)</div>
-  <div>${t.samples.slice().reverse().map((s,i)=>{const j=t.samples.length-1-i;return `<div class="pitem"><span class="grow">${fmtDur(s.sec)} <span class="pill">${s.src==='maps'?'🗺️ Maps':s.src==='manual'?'ręcznie':s.src==='guard'?'pilnowanie':'stoper'}</span></span><span class="mut">${new Date(s.ts).toLocaleDateString('pl')}</span><button class="ghost" onclick="delSample('${id}',${j})">✕</button></div>`}).join('')||'<p class="mut">Brak</p>'}</div>
-  <div class="row"><input id="tManual" type="number" min="0" step="0.5" placeholder="min" class="grow"><button onclick="addManual('${id}')">Dodaj ręcznie</button></div>
-  <h2>🗺️ Czas z Google Maps</h2><div class="mut">Średni czas przejazdu w wybrany dzień i porę (z 3 najbliższych takich dni).</div>
-  <label>Skąd</label><input id="mO" value="${esc(m.origin)}" placeholder="adres początkowy">
-  <label>Dokąd</label><input id="mD" value="${esc(m.dest)}" placeholder="adres docelowy">
-  <div class="row"><div class="grow"><label>Środek transportu</label><select id="mM">${[['DRIVE','Samochód'],['TRANSIT','Komunikacja'],['WALK','Pieszo'],['BICYCLE','Rower'],['TWO_WHEELER','Skuter/motocykl']].map(([v,l])=>`<option value="${v}" ${m.mode===v?'selected':''}>${l}</option>`).join('')}</select></div></div>
-  <div class="row"><div class="grow"><label>Dzień</label><select id="mDay">${['Niedziela','Poniedziałek','Wtorek','Środa','Czwartek','Piątek','Sobota'].map((d,i)=>`<option value="${i}" ${String(m.day)===String(i)?'selected':''}>${d}</option>`).join('')}</select></div><div class="grow"><label>Wyjazd o</label><input type="time" id="mT" value="${m.time}"></div></div>
-  <div class="row" style="margin-top:10px"><button class="pri grow" onclick="mapsFetch('${id}')">Pobierz czas</button><button class="grow" onclick="mapsOpen()">Otwórz Maps</button></div>
-  <div id="mOut" class="mut" style="margin-top:6px">${S.settings.apiKey?'':'Automatyczne pobieranie wymaga klucza Google API (⚙️). Bez klucza otwórz Maps i wpisz czas ręcznie powyżej.'}</div>
-  <div class="row" style="margin-top:18px"><button class="bad" onclick="delTask('${id}')">Usuń zadanie</button><button class="pri grow" onclick="saveTask('${id}')">Zapisz</button></div>`)}
-async function renameVoice(id){const n=await listenOnce('Powiedz nową nazwę');if(n){$('tName').value=n}}
-function saveTask(id){const t=S.tasks.find(x=>x.id===id);t.name=$('tName').value.trim()||t.name;saveMapsCfg(t);save();closeSheet();renderTasks();renderPlan()}
-function saveMapsCfg(t){const o=$('mO').value.trim(),d=$('mD').value.trim();t.maps=(o&&d)?{origin:o,dest:d,mode:$('mM').value,day:$('mDay').value,time:$('mT').value}:null}
-function delSample(id,j){const t=S.tasks.find(x=>x.id===id);t.samples.splice(j,1);save();openTask(id);renderTasks()}
-function addManual(id){const v=parseFloat($('tManual').value);if(!(v>0))return;const t=S.tasks.find(x=>x.id===id);t.samples.push({sec:Math.round(v*60),ts:Date.now(),src:'manual'});save();openTask(id);renderTasks()}
-function delTask(id){if(!sheetConfirm('Usunąć zadanie?',()=>{S.tasks=S.tasks.filter(x=>x.id!==id);S.plan.items=S.plan.items.filter(i=>i.taskId!==id);if(S.running&&S.running.id===id)S.running=null;save();closeSheet();renderTasks();renderPlan()}))return}
+/* --- formularz: czynność --- */
+function openActivity(id){const t=S.tasks.find(x=>x.id===id);
+  sheet(`<div class="mut">Czynność</div><div class="row"><input id="tName" value="${esc(t.name)}" class="grow"><button onclick="renameVoice()">🎤</button></div>
+  ${samplesHtml(t)}
+  <div class="row" style="margin-top:18px"><button class="bad" onclick="delTask('${id}')">Usuń</button><button class="pri grow" onclick="saveActivity('${id}')">Zapisz</button></div>`)}
+async function renameVoice(){const n=await listenOnce('Powiedz nową nazwę');if(n){$('tName').value=n}}
+function saveActivity(id){const t=S.tasks.find(x=>x.id===id);t.name=$('tName').value.trim()||t.name;save();closeSheet();renderTasks();renderPlan()}
+
+/* --- formularz: dojazd z przystankami --- */
+let TD=null; // szkic edytowanego dojazdu
+function openTravel(id){
+  const t=id&&S.tasks.find(x=>x.id===id);
+  const m=(t&&t.maps)||{origin:'',stops:[],dest:'',mode:'DRIVE',day:String(new Date().getDay()===0||new Date().getDay()===6?1:new Date().getDay()),time:'07:30'};
+  TD={id:t?t.id:null,name:t?t.name:'Dojazd',...JSON.parse(JSON.stringify(m)),stops:JSON.parse(JSON.stringify(m.stops||[]))};renderTravel()}
+function travelRead(){if(!TD||!$('trO'))return;TD.name=$('tName').value.trim()||TD.name;TD.origin=$('trO').value.trim();TD.dest=$('trD').value.trim();TD.mode=$('trM').value;TD.day=$('trDay').value;TD.time=$('trT').value;
+  TD.stops=TD.stops.map((s,i)=>({addr:$('trS'+i).value.trim(),stay:Math.max(0,parseFloat($('trW'+i).value)||0)}))}
+function renderTravel(){const t=TD.id&&S.tasks.find(x=>x.id===TD.id);
+  sheet(`<div class="mut">Dojazd</div><div class="row"><input id="tName" value="${esc(TD.name)}" class="grow" placeholder="np. Do pracy"><button onclick="renameVoice()">🎤</button></div>
+  <h2>Trasa</h2>
+  <label>🟢 Skąd</label><input id="trO" value="${esc(TD.origin)}" placeholder="adres początkowy">
+  ${TD.stops.map((s,i)=>`<div class="card" style="background:var(--card2);padding:10px;margin:8px 0">
+    <div class="row"><b class="grow">📍 Przystanek ${i+1}</b><button class="ghost" onclick="trMove(${i},-1)">▲</button><button class="ghost" onclick="trMove(${i},1)">▼</button><button class="ghost" onclick="trDel(${i})">✕</button></div>
+    <input id="trS${i}" value="${esc(s.addr)}" placeholder="adres, np. przedszkole, sklep">
+    <div class="row" style="margin-top:6px"><span class="mut grow">Postój</span><input id="trW${i}" type="number" min="0" step="1" value="${s.stay||0}" style="width:80px"><span class="mut">min</span></div></div>`).join('')}
+  <button style="width:100%;margin:8px 0" onclick="trAdd()">＋ Dodaj przystanek</button>
+  <label>🏁 Dokąd</label><input id="trD" value="${esc(TD.dest)}" placeholder="adres docelowy">
+  <label>Środek transportu</label><select id="trM">${MODES.map(([v,l])=>`<option value="${v}" ${TD.mode===v?'selected':''}>${l}</option>`).join('')}</select>
+  <div class="row"><div class="grow"><label>Dzień</label><select id="trDay">${DAYS.map((d,i)=>`<option value="${i}" ${String(TD.day)===String(i)?'selected':''}>${d}</option>`).join('')}</select></div><div class="grow"><label>Wyjazd o</label><input type="time" id="trT" value="${TD.time}"></div></div>
+  <div class="row" style="margin-top:12px"><button class="pri grow" onclick="mapsFetch()">🗺️ Pobierz czas</button><button class="grow" onclick="mapsOpen()">Otwórz Maps</button></div>
+  <div id="mOut" class="mut" style="margin-top:6px">${S.settings.apiKey?'Średnia z 3 najbliższych takich dni, z korkami. Postoje są doliczane do czasu.':'Automatyczne pobieranie wymaga klucza Google API (⚙️). Bez klucza otwórz Maps i wpisz czas ręcznie.'}</div>
+  ${t?samplesHtml(t):'<p class="mut">Po zapisaniu możesz mierzyć dojazd stoperem albo pobrać czas z Google Maps.</p>'}
+  <div class="row" style="margin-top:18px">${t?`<button class="bad" onclick="delTask('${t.id}')">Usuń</button>`:`<button onclick="closeSheet()">Anuluj</button>`}<button class="pri grow" onclick="saveTravel(true)">Zapisz</button></div>`)}
+function trAdd(){travelRead();TD.stops.push({addr:'',stay:5});renderTravel();setTimeout(()=>{const e=$('trS'+(TD.stops.length-1));e&&e.focus()},50)}
+function trDel(i){travelRead();TD.stops.splice(i,1);renderTravel()}
+function trMove(i,d){travelRead();const a=TD.stops,j=i+d;if(j<0||j>=a.length)return;[a[i],a[j]]=[a[j],a[i]];renderTravel()}
+function saveTravel(close){travelRead();
+  const maps={origin:TD.origin,stops:TD.stops.filter(s=>s.addr),dest:TD.dest,mode:TD.mode,day:TD.day,time:TD.time};
+  let t=TD.id&&S.tasks.find(x=>x.id===TD.id);
+  if(!t){t={id:uid(),type:'travel',name:TD.name,samples:[],used:Date.now()};S.tasks.unshift(t);TD.id=t.id}
+  t.name=TD.name;t.maps=maps;save();renderTasks();renderPlan();if(close){closeSheet();TD=null}return t}
+function delSample(id,j){const t=S.tasks.find(x=>x.id===id);t.samples.splice(j,1);save();reopen(id);renderTasks()}
+function addManual(id){const v=parseFloat($('tManual').value);if(!(v>0))return;const t=S.tasks.find(x=>x.id===id);t.samples.push({sec:Math.round(v*60),ts:Date.now(),src:'manual'});save();reopen(id);renderTasks()}
+function delTask(id){sheetConfirm('Usunąć zadanie?',()=>{S.tasks=S.tasks.filter(x=>x.id!==id);S.plan.items=S.plan.items.filter(i=>i.taskId!==id);if(S.running&&S.running.id===id)S.running=null;TD=null;save();closeSheet();renderTasks();renderPlan()})}
 function nextOcc(day,time,k){const [h,mi]=time.split(':').map(Number);const d=new Date();d.setHours(h,mi,0,0);let add=(Number(day)-d.getDay()+7)%7;if(add===0&&d<=new Date())add=7;d.setDate(d.getDate()+add+7*k);return d}
-function mapsOpen(){const o=$('mO').value,d=$('mD').value;const tm={DRIVE:'driving',TRANSIT:'transit',WALK:'walking',BICYCLE:'bicycling',TWO_WHEELER:'driving'}[$('mM').value];
-  const a=document.createElement('a');a.href=`https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(o)}&destination=${encodeURIComponent(d)}&travelmode=${tm}`;if(N){N.openUrl(a.href);return}a.target='_blank';a.rel='noopener';a.click()}
-async function mapsFetch(id){const t=S.tasks.find(x=>x.id===id);saveMapsCfg(t);save();const out=$('mOut');
-  if(!t.maps)return out.textContent='Podaj adres początkowy i docelowy.';if(!S.settings.apiKey)return out.textContent='Brak klucza Google API – dodaj go w ⚙️ Ustawieniach.';
-  out.textContent='Pobieram…';const res=[];
-  for(let k=0;k<3;k++){const dep=nextOcc(t.maps.day,t.maps.time,k);const body={origin:{address:t.maps.origin},destination:{address:t.maps.dest},travelMode:t.maps.mode,departureTime:dep.toISOString(),languageCode:'pl',units:'METRIC'};
-    if(t.maps.mode==='DRIVE'||t.maps.mode==='TWO_WHEELER')body.routingPreference='TRAFFIC_AWARE_OPTIMAL';
-    try{const r=await fetch('https://routes.googleapis.com/directions/v2:computeRoutes',{method:'POST',headers:{'Content-Type':'application/json','X-Goog-Api-Key':S.settings.apiKey,'X-Goog-FieldMask':'routes.duration,routes.distanceMeters'},body:JSON.stringify(body)});
-      const j=await r.json();if(j.error)throw new Error(j.error.message);if(!j.routes||!j.routes.length)throw new Error('Nie znaleziono trasy');res.push(parseInt(j.routes[0].duration))}
-    catch(e){out.textContent='Błąd: '+e.message;return}}
-  const avg=Math.round(res.reduce((a,b)=>a+b,0)/res.length);t.samples.push({sec:avg,ts:Date.now(),src:'maps'});save();renderTasks();renderPlan();
-  openTask(id);$('mOut').textContent=`Średnio ${fmtMin(avg)} (pomiary: ${res.map(fmtMin).join(', ')}) – dodano jako pomiar.`}
+function mapsOpen(){travelRead();const tm={DRIVE:'driving',TRANSIT:'transit',WALK:'walking',BICYCLE:'bicycling',TWO_WHEELER:'two-wheeler'}[TD.mode];const st=TD.stops.filter(s=>s.addr).map(s=>s.addr);
+  const href=`https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(TD.origin)}&destination=${encodeURIComponent(TD.dest)}&travelmode=${tm}`+(st.length?`&waypoints=${encodeURIComponent(st.join('|'))}`:'');
+  if(N){N.openUrl(href);return}const a=document.createElement('a');a.href=href;a.target='_blank';a.rel='noopener';a.click()}
+async function routeSec(from,to,mode,dep){
+  const body={origin:{address:from},destination:{address:to},travelMode:mode,departureTime:dep.toISOString(),languageCode:'pl',units:'METRIC'};
+  if(mode==='DRIVE'||mode==='TWO_WHEELER')body.routingPreference='TRAFFIC_AWARE_OPTIMAL';
+  const r=await fetch('https://routes.googleapis.com/directions/v2:computeRoutes',{method:'POST',headers:{'Content-Type':'application/json','X-Goog-Api-Key':S.settings.apiKey,'X-Goog-FieldMask':'routes.duration'},body:JSON.stringify(body)});
+  const j=await r.json();if(j.error)throw new Error(j.error.message);if(!j.routes||!j.routes.length)throw new Error(`nie znaleziono trasy ${short(from)} → ${short(to)}`);return parseInt(j.routes[0].duration)}
+/* Trasa liczona odcinkami (działa też dla komunikacji, która nie obsługuje punktów pośrednich):
+   każdy kolejny odcinek startuje o godzinie przyjazdu + postój. */
+async function mapsFetch(){const t=saveTravel(false);const m=t.maps;renderTravel();const out=$('mOut');
+  if(!m.origin||!m.dest)return out.textContent='Podaj adres początkowy i docelowy.';if(!S.settings.apiKey)return out.textContent='Brak klucza Google API – dodaj go w ⚙️ Ustawieniach.';
+  const pts=[m.origin,...m.stops.map(s=>s.addr),m.dest];const nLegs=pts.length-1;const legSum=Array(nLegs).fill(0);const totals=[];
+  try{for(let k=0;k<3;k++){out.textContent=`Pobieram… (${k+1}/3)`;let tm=nextOcc(m.day,m.time,k).getTime(),tot=0;
+      for(let i=0;i<nLegs;i++){const s=await routeSec(pts[i],pts[i+1],m.mode,new Date(tm));legSum[i]+=s;tot+=s;tm+=s*1000;
+        if(i<m.stops.length){const w=(m.stops[i].stay||0)*60;tot+=w;tm+=w*1000}}
+      totals.push(tot)}}
+  catch(e){out.textContent='Błąd: '+e.message;return}
+  const avg=Math.round(totals.reduce((a,b)=>a+b,0)/totals.length);t.samples.push({sec:avg,ts:Date.now(),src:'maps'});save();renderTasks();renderPlan();renderTravel();
+  const stay=m.stops.reduce((a,s)=>a+(s.stay||0)*60,0);
+  $('mOut').innerHTML=`<b>Średnio ${fmtMin(avg)}</b> – dodano jako pomiar.<br>`+pts.slice(0,-1).map((p,i)=>`${esc(short(p))} → ${esc(short(pts[i+1]))}: ${fmtMin(legSum[i]/3)}`).join('<br>')+(stay?`<br>Postoje: ${fmtMin(stay)}`:'')}
 
 /* ========== PLANOWANIE ========== */
 function defaultDate(){const [h,m]=S.plan.deadline.split(':').map(Number);const d=new Date();d.setHours(h,m,0,0);const total=planTotal();if(d.getTime()-total*1000<Date.now())d.setDate(d.getDate()+1);return d.toISOString().slice(0,10)}
@@ -260,7 +306,7 @@ function planSet(i,v){S.plan.items[i].sec=Math.max(0,Math.round(parseFloat(v||0)
 function planRefresh(i){const it=S.plan.items[i];const t=S.tasks.find(x=>x.id===it.taskId);if(t&&estimate(t)){it.sec=estimate(t);save();renderPlan()}}
 function renderPlan(keepFocus){
   $('pDeadline').value=S.plan.deadline;$('pDate').value=S.plan.date||defaultDate();
-  $('pAdd').innerHTML=S.tasks.length?S.tasks.map(t=>`<option value="${t.id}">${esc(t.name)} (${t.samples.length?fmtMin(estimate(t)):'?'})</option>`).join(''):'<option value="">— najpierw dodaj zadania w Pomiarach —</option>';
+  $('pAdd').innerHTML=S.tasks.length?S.tasks.map(t=>`<option value="${t.id}">${t.type==='travel'?'🚗 ':''}${esc(t.name)} (${t.samples.length?fmtMin(estimate(t)):'?'})</option>`).join(''):'<option value="">— najpierw dodaj zadania w Pomiarach —</option>';
   const sch=schedule();
   if(!keepFocus)$('pItems').innerHTML=sch.length?sch.map((it,i)=>{const t=S.tasks.find(x=>x.id===it.taskId);return `<div class="pitem"><span class="time" data-st="${i}">${hhmm(it.start)}</span><span class="pname">${esc(t?t.name:'?')}</span>
     <input type="number" min="0" step="0.5" value="${+(it.sec/60).toFixed(1)}" onchange="planSet(${i},this.value)" title="minuty"><span class="mut">min</span>
@@ -379,7 +425,7 @@ function sheet(h){$('sheetBody').innerHTML=h;$('sheet').classList.add('on')}
 function closeSheet(){$('sheet').classList.remove('on')}
 function sheetConfirm(msg,yes){window._yes=yes;sheet(`<h2>${esc(msg)}</h2><div class="row" style="margin-top:14px"><button class="grow" onclick="closeSheet()">Nie</button><button class="bad grow" onclick="_yes()">Tak</button></div>`);return true}
 function go(v){document.querySelectorAll('.view').forEach(e=>e.classList.toggle('on',e.id==='v-'+v));document.querySelectorAll('nav button').forEach(b=>b.classList.toggle('on',b.dataset.v===v));
-  $('fab').style.display=v==='data'?'block':'none';$('ttl').textContent={home:'Zdążę!',data:'Pomiary',plan:'Plan',guard:'Pilnowanie'}[v];if(v==='guard')renderGuard();if(v==='plan')renderPlan();window.scrollTo(0,0)}
+  $('fab').style.display=$('fab2').style.display=v==='data'?'block':'none';$('ttl').textContent={home:'Zdążę!',data:'Pomiary',plan:'Plan',guard:'Pilnowanie'}[v];if(v==='guard')renderGuard();if(v==='plan')renderPlan();window.scrollTo(0,0)}
 document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{audio();go(b.dataset.v)});
 $('voiceBtn').onclick=()=>{audio();toggleVoice()};
 function renderAll(){renderTasks();renderPlan();renderGuard();renderHome()}

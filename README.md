@@ -2,7 +2,10 @@
 
 Trzy tryby:
 
-1. **⏱️ Pomiary**: duży „+” → mówisz nazwę → zadanie gotowe. Okrągły przycisk START/STOP mierzy czas. Głosem (🎤 w nagłówku): „nowe zadanie prysznic”, „start prysznic”, „stop”. Czas dojazdu można pobrać z Google Maps (dzień tygodnia, godzina, środek transportu, średnia z 3 najbliższych takich dni).
+1. **⏱️ Pomiary** – dwa rodzaje zadań, każdy z osobnym formularzem:
+   - **Czynność** – duży „+” → mówisz nazwę → gotowe. Okrągły przycisk START/STOP mierzy czas.
+   - **🚗 Dojazd** – skąd, dowolna liczba **przystanków** (z czasem postoju), dokąd, środek transportu, dzień i godzina wyjazdu. Czas z Google Maps liczony jest odcinkami (każdy odcinek startuje po przyjeździe + postoju), jako średnia z 3 najbliższych takich dni.
+   - Głosem (🎤 w nagłówku): „nowe zadanie prysznic”, „nowy dojazd”, „start prysznic”, „stop”.
 2. **🗓️ Plan**: układasz zadania w kolejności i ustawiasz godzinę końca. Aplikacja liczy wstecz godziny startu i ustawia budzik.
 3. **🛡️ Pilnowanie**: startuje razem z budzikiem i odlicza każde zadanie. 30 s przed końcem są 3 krótkie piknięcia, na końcu długi głośny sygnał i komunikat głosowy z nazwą następnego zadania. Na koniec pyta „Czy zdążyłeś?” (przyciskiem albo głosem), a odpowiedź trafia do historii na ekranie startowym.
 
