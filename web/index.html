@@ -349,15 +349,32 @@ document.addEventListener('visibilitychange',()=>{if(document.visibilityState===
 function startRun(fromAlarm){
   const sch=schedule();if(!sch.length)return toast('Plan jest pusty');
   const now=Date.now();
-  S.run={items:sch.map(i=>({taskId:i.taskId,sec:i.sec})),idx:0,taskStart:now,deadline:fromAlarm?deadlineTs():now+planTotal()*1000,warned:false,half:false,announced:!fromAlarm,asking:false,started:now};
+  S.run={items:sch.map(i=>({taskId:i.taskId,sec:i.sec})),idx:0,taskStart:now,deadline:fromAlarm?deadlineTs():now+planTotal()*1000,warned:false,half:false,announced:!fromAlarm,asking:false,started:now,lateMsg:''};
+  ensurePlanEnds(S.run);
   S.plan.armed=false;save();requestWake();go('guard');renderGuard();
   if(fromAlarm){startRing();if(!N)try{new Notification('Zdążę! – pobudka',{body:'Czas zacząć: '+curName()})}catch(e){}}else announce()}
 const curName=()=>{const it=S.run&&S.run.items[S.run.idx];const t=it&&S.tasks.find(x=>x.id===it.taskId);return t?t.name:'zadanie'};
-function announce(){if(!S.run)return;const it=S.run.items[S.run.idx];say(`Teraz: ${curName()}. Masz ${spokenDur(it.sec)}.`)}
+/* Oryginalne (z planu) godziny końca każdego zadania – liczone wstecz od terminu, niezmienne w trakcie */
+function ensurePlanEnds(r){if(r.items.every(i=>i.planEnd))return;let t=r.deadline-r.items.reduce((a,i)=>a+(i.orig||i.sec),0)*1000;
+  r.items.forEach(i=>{i.orig=i.orig||i.sec;t+=i.orig*1000;i.planEnd=t})}
+function plMin(n){const d=n%10,dd=n%100;return n===1?'minutę':(d>=2&&d<=4&&(dd<12||dd>14))?'minuty':'minut'}
+function lateSpoken(ms){const m=Math.round(ms/60000);return m>=1?`${m} ${plMin(m)}`:`${Math.round(ms/1000)} sekund`}
+function announce(){if(!S.run)return;const it=S.run.items[S.run.idx];
+  say(`${S.run.lateMsg?S.run.lateMsg+' ':''}Teraz: ${curName()}. Masz ${spokenDur(it.sec)}. Koniec według planu o ${hhmm(it.planEnd)}.`)}
+/* Skracanie bieżącego zadania (dostępne, gdy jesteśmy po czasie względem planu) */
+function shorten(mode){const r=S.run;if(!r||r.asking)return;const it=r.items[r.idx];const el=(Date.now()-r.taskStart)/1000;let left;
+  if(mode==='plan')left=(it.planEnd-Date.now())/1000;
+  else if(mode==='set'){const v=parseFloat($('shSet').value);if(!(v>=0))return toast('Podaj liczbę minut');left=v*60}
+  else left=Math.max(0,it.sec-el)-mode*60;
+  left=Math.max(0,Math.round(left));it.sec=Math.round(el+left);
+  r.warned=left<=30;r.half=el>=it.sec/2;save();
+  if(left<=0){nextTask(false);return}
+  renderGuard();toast(`Skrócono – zostało ${fmtDur(left)}`);tone(880,.12)}
 function guardDone(){if(!S.run||S.run.asking)return;nextTask(true)}
 function nextTask(manual){const r=S.run;const it=r.items[r.idx];const actual=(Date.now()-r.taskStart)/1000;
   if(manual&&S.settings.learn&&actual>5){const t=S.tasks.find(x=>x.id===it.taskId);if(t)t.samples.push({sec:Math.round(actual),ts:Date.now(),src:'guard'})}
   if(!manual)beepLong();else tone(660,.2);
+  const over=Date.now()-it.planEnd;r.lateMsg=over>=30000?`Przekroczono plan o ${lateSpoken(over)}.`:'';
   r.idx++;r.taskStart=Date.now();r.warned=false;r.half=false;save();
   if(r.idx>=r.items.length){askFinish();return}
   setTimeout(announce,manual?300:1800);renderGuard()}
@@ -376,10 +393,15 @@ function renderGuard(){const el=$('guard');const r=S.run;
       <button class="pri" style="width:100%;padding:14px;margin-bottom:8px" onclick="go('plan')">🗓️ Do planu</button>${sch.length?'<button style="width:100%;padding:14px" onclick="startRun(false)">▶ Zacznij teraz (test)</button>':''}</div>`;return}
   if(r.asking){el.innerHTML=`<div class="card" style="text-align:center;padding:30px 14px"><div style="font-size:60px">🏁</div><h2>Czy zdążyłeś?</h2><p class="mut">Termin: ${hhmm(r.deadline)} · koniec zadań: ${hhmm(r.finished)}</p>
     <div class="row"><button class="ok grow" style="padding:18px;font-size:20px" onclick="finishRun(true)">Tak 👍</button><button class="bad grow" style="padding:18px;font-size:20px" onclick="finishRun(false)">Nie 👎</button></div></div>`;return}
-  const it=r.items[r.idx];const nx=r.items[r.idx+1];const nt=nx&&S.tasks.find(x=>x.id===nx.taskId);
-  el.innerHTML=`<div style="text-align:center"><div class="mut">Zadanie ${r.idx+1} z ${r.items.length}</div><h2 style="font-size:28px;margin:4px 0">${esc(curName())}</h2></div>
+  ensurePlanEnds(r);const it=r.items[r.idx];const nx=r.items[r.idx+1];const nt=nx&&S.tasks.find(x=>x.id===nx.taskId);
+  el.innerHTML=`${r.lateMsg?`<div class="card" style="background:#7f1d1d;color:#fff;text-align:center;margin-top:0">⚠️ ${esc(r.lateMsg)}</div>`:''}
+  <div style="text-align:center"><div class="mut">Zadanie ${r.idx+1} z ${r.items.length}</div><h2 style="font-size:28px;margin:4px 0">${esc(curName())}</h2>
+  <div>Koniec wg planu: <b style="color:var(--acc);font-size:20px">${hhmm(it.planEnd)}</b></div><div class="mut" id="gProj"></div></div>
   <div class="ring"><svg width="240" height="240"><circle cx="120" cy="120" r="108" stroke="#273449" stroke-width="14" fill="none"/><circle id="arc" cx="120" cy="120" r="108" stroke="var(--acc)" stroke-width="14" fill="none" stroke-linecap="round" stroke-dasharray="678.6" stroke-dashoffset="0"/></svg>
   <div class="c"><div class="big" id="gLeft">–</div><div class="mut">z ${fmtDur(it.sec)}</div></div></div>
+  <div class="card" id="shPanel" style="display:none;border:1px solid var(--bad)"><b>⏩ Jesteś po czasie – skróć zadanie</b>
+    <div class="row" style="margin-top:8px;gap:6px"><button class="grow" style="white-space:nowrap;padding:10px 4px" onclick="shorten(1)">−1 min</button><button class="grow" style="white-space:nowrap;padding:10px 4px" onclick="shorten(2)">−2 min</button><button class="grow" style="white-space:nowrap;padding:10px 4px" onclick="shorten(5)">−5 min</button><button class="bad grow" style="white-space:nowrap;padding:10px 4px" onclick="shorten('plan')">Do planu</button></div>
+    <div class="row" style="margin-top:8px"><span class="mut">Zostało</span><input id="shSet" type="number" min="0" step="0.5" placeholder="min" style="width:90px"><span class="mut">min</span><button class="grow" onclick="shorten('set')">Ustaw</button></div></div>
   <button class="ok" style="width:100%;padding:18px;font-size:20px" onclick="guardDone()">✓ Gotowe – następne</button>
   <div class="card"><div class="row"><div class="grow"><div class="mut">Następne</div><b>${nt?esc(nt.name):'— koniec —'}</b></div><div style="text-align:right"><div class="mut">Termin</div><b>${hhmm(r.deadline)}</b></div></div><div class="mut" id="gSlack" style="margin-top:6px"></div></div>
   <button class="ghost" style="width:100%" onclick="abortRun()">Przerwij</button>`;tick()}
@@ -440,6 +462,9 @@ function tick(){const now=Date.now();
     const g=$('gLeft');if(g){g.textContent=left>=0?fmtDur(left):'-'+fmtDur(-left);g.style.color=left<=30?'var(--warn)':'';
       const arc=$('arc');if(arc){arc.style.strokeDashoffset=678.6*Math.min(1,el/Math.max(1,it.sec));arc.style.stroke=left<=30?'var(--warn)':'var(--acc)'}
       const rest=r.items.slice(r.idx+1).reduce((a,x)=>a+x.sec,0);const proj=now+Math.max(0,left)*1000+rest*1000;const sl=Math.round((r.deadline-proj)/60000);
+      const pe=r.taskStart+it.sec*1000,lateBy=pe-it.planEnd;const gp=$('gProj');
+      if(gp)gp.innerHTML=lateBy>=30000?`<span style="color:var(--bad)">Przewidywany koniec ${hhmm(pe)} (+${Math.round(lateBy/60000)} min)</span>`:'';
+      const sp=$('shPanel');if(sp){const show=lateBy>=30000&&left>0;if((sp.style.display!=='none')!==show)sp.style.display=show?'block':'none'}
       const gs=$('gSlack');if(gs)gs.innerHTML=sl>=0?`<span style="color:var(--ok)">Zapas: ${sl} min</span>`:`<span style="color:var(--bad)">Opóźnienie: ${-sl} min</span>`}
     if(!r.half&&el>=it.sec/2&&it.sec>=80){r.half=true;save();say('Połowa czasu')}
     if(!r.warned&&left<=30&&it.sec>35){r.warned=true;save();beep3()}
