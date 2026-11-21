@@ -185,6 +185,7 @@ function handleCmd(t){
   let m;
   if(/^(nowy|dodaj) dojazd/.test(t)){openTravel(null);return}
   if(m=t.match(/^(nowe|dodaj) zadanie\s*(.*)$/)){const n=m[2].trim();if(n){addTask(n);toast('Dodano: '+n)}else newTaskVoice();return}
+  if(S.run&&!S.run.asking&&/^(start|zacznij|rozpocznij|startuj)\s*$/.test(t)){restartTask();return}
   if(m=t.match(/^(start|zacznij|rozpocznij|startuj)\s*(.*)$/)){const tk=findTask(m[2])||(m[2]?null:lastTask());if(tk){startTimer(tk.id);say('Start '+tk.name)}else toast('Nie znam zadania: '+m[2]);return}
   if(/^(stop|koniec|zakończ|gotowe|stój)/.test(t)){
     if(S.run){guardDone();return}
@@ -370,6 +371,11 @@ function shorten(mode){const r=S.run;if(!r||r.asking)return;const it=r.items[r.i
   r.warned=left<=30;r.half=el>=it.sec/2;save();
   if(left<=0){nextTask(false);return}
   renderGuard();toast(`Skrócono – zostało ${fmtDur(left)}`);tone(880,.12)}
+/* Start z opóźnieniem: zeruje timer bieżącego zadania (pełny czas od teraz) */
+function restartTask(){const r=S.run;if(!r||r.asking)return;ensurePlanEnds(r);const it=r.items[r.idx];
+  it.sec=it.orig||it.sec;r.taskStart=Date.now();r.warned=false;r.half=false;r.lateMsg='';save();renderGuard();tone(990,.12);
+  const late=r.taskStart+it.sec*1000-it.planEnd;
+  say(`Start: ${curName()}. Masz ${spokenDur(it.sec)}.`+(late>=30000?` Skończysz ${lateSpoken(late)} po planie.`:''))}
 function guardDone(){if(!S.run||S.run.asking)return;nextTask(true)}
 function nextTask(manual){const r=S.run;const it=r.items[r.idx];const actual=(Date.now()-r.taskStart)/1000;
   if(manual&&S.settings.learn&&actual>5){const t=S.tasks.find(x=>x.id===it.taskId);if(t)t.samples.push({sec:Math.round(actual),ts:Date.now(),src:'guard'})}
@@ -402,7 +408,8 @@ function renderGuard(){const el=$('guard');const r=S.run;
   <div class="card" id="shPanel" style="display:none;border:1px solid var(--bad)"><b>⏩ Jesteś po czasie – skróć zadanie</b>
     <div class="row" style="margin-top:8px;gap:6px"><button class="grow" style="white-space:nowrap;padding:10px 4px" onclick="shorten(1)">−1 min</button><button class="grow" style="white-space:nowrap;padding:10px 4px" onclick="shorten(2)">−2 min</button><button class="grow" style="white-space:nowrap;padding:10px 4px" onclick="shorten(5)">−5 min</button><button class="bad grow" style="white-space:nowrap;padding:10px 4px" onclick="shorten('plan')">Do planu</button></div>
     <div class="row" style="margin-top:8px"><span class="mut">Zostało</span><input id="shSet" type="number" min="0" step="0.5" placeholder="min" style="width:90px"><span class="mut">min</span><button class="grow" onclick="shorten('set')">Ustaw</button></div></div>
-  <button class="ok" style="width:100%;padding:18px;font-size:20px" onclick="guardDone()">✓ Gotowe – następne</button>
+  <div class="row"><button class="pri" style="flex:1;padding:16px 8px;font-size:18px" onclick="restartTask()">▶ Start<div style="font-size:12px;font-weight:400">zeruj czas</div></button>
+  <button class="ok" style="flex:1.4;padding:16px 8px;font-size:18px" onclick="guardDone()">✓ Gotowe<div style="font-size:12px;font-weight:400">następne (opcjonalnie)</div></button></div>
   <div class="card"><div class="row"><div class="grow"><div class="mut">Następne</div><b>${nt?esc(nt.name):'— koniec —'}</b></div><div style="text-align:right"><div class="mut">Termin</div><b>${hhmm(r.deadline)}</b></div></div><div class="mut" id="gSlack" style="margin-top:6px"></div></div>
   <button class="ghost" style="width:100%" onclick="abortRun()">Przerwij</button>`;tick()}
 
