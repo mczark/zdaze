@@ -60,7 +60,7 @@ nav button span{font-size:22px}nav button.on{color:var(--acc)}
 </style>
 </head>
 <body>
-<header><h1 id="ttl">Zdążę!</h1><div class="row"><button class="ghost" id="voiceBtn" title="Sterowanie głosem">🎤</button><button class="ghost" onclick="openSettings()">⚙️</button></div></header>
+<header><h1 id="ttl">Zdążę!</h1><div class="row"><button class="ghost" id="muteBtn" title="Wycisz / włącz głos" onclick="toggleMute()">🔊</button><button class="ghost" id="voiceBtn" title="Sterowanie głosem">🎤</button><button class="ghost" onclick="openSettings()">⚙️</button></div></header>
 
 <!-- START / HISTORIA -->
 <section class="view on" id="v-home">
@@ -166,8 +166,8 @@ function pickVoice(){const v=speechSynthesis.getVoices();voicePL=v.find(x=>x.lan
 if('speechSynthesis' in window){pickVoice();speechSynthesis.onvoiceschanged=pickVoice}
 /* Komunikaty głosowe w kolejce: nowy czeka, aż poprzedni się skończy (nic nie jest ucinane) */
 let sayChain=Promise.resolve();
-function say(t){const p=sayChain.then(()=>sayNow(t));sayChain=p.catch(()=>{});return p}
-function sayNow(t){const limit=Math.max(6000,t.length*110);return new Promise(res=>{if(N){const id=uid();nCb.tts[id]=res;N.speak(t,id);setTimeout(res,limit);return}if(!('speechSynthesis' in window))return res();const u=new SpeechSynthesisUtterance(t);
+function say(t){if(S.settings.mute)return Promise.resolve();const p=sayChain.then(()=>sayNow(t));sayChain=p.catch(()=>{});return p}
+function sayNow(t){const limit=Math.max(6000,t.length*110);return new Promise(res=>{if(S.settings.mute)return res();if(N){const id=uid();nCb.tts[id]=res;N.speak(t,id);setTimeout(res,limit);return}if(!('speechSynthesis' in window))return res();const u=new SpeechSynthesisUtterance(t);
   u.lang=S.settings.lang;if(voicePL)u.voice=voicePL;u.volume=1;u.rate=1;u.onend=u.onerror=()=>res();speechSynthesis.speak(u);setTimeout(res,limit)})}
 const SR=window.SpeechRecognition||window.webkitSpeechRecognition;const HAS_SR=!!(N||SR);
 let onceRec=null,onceRes=null;
@@ -205,7 +205,15 @@ const lastTask=()=>S.tasks.slice().sort((a,b)=>(b.used||0)-(a.used||0))[0];
 /* Odmiana liczebników: forma dla 1 / 2–4 (bez 12–14) / reszty; przypadek: 'nom' (mianownik) lub 'acc' (biernik) */
 const UNITS={h:{nom:['godzina','godziny','godzin'],acc:['godzinę','godziny','godzin']},m:{nom:['minuta','minuty','minut'],acc:['minutę','minuty','minut']},s:{nom:['sekunda','sekundy','sekund'],acc:['sekundę','sekundy','sekund']}};
 function plForm(n,f){const d=n%10,dd=n%100;return n===1?f[0]:(d>=2&&d<=4&&(dd<12||dd>14))?f[1]:f[2]}
-const numUnit=(n,u,cas='acc')=>`${n} ${plForm(n,UNITS[u][cas])}`;
+/* Liczebnik słownie, rodzaj żeński (minuta/sekunda/godzina): 1 → jedna/jedną, 2 → dwie, 21 → dwadzieścia jeden */
+const W1=['zero','jeden','dwa','trzy','cztery','pięć','sześć','siedem','osiem','dziewięć'],
+  W10=['dziesięć','jedenaście','dwanaście','trzynaście','czternaście','piętnaście','szesnaście','siedemnaście','osiemnaście','dziewiętnaście'],
+  WT=['','','dwadzieścia','trzydzieści','czterdzieści','pięćdziesiąt','sześćdziesiąt','siedemdziesiąt','osiemdziesiąt','dziewięćdziesiąt'],
+  WH=['','sto','dwieście','trzysta','czterysta','pięćset','sześćset','siedemset','osiemset','dziewięćset'];
+function numWordsF(n,cas='nom'){n=Math.round(Math.abs(n));if(n===1)return cas==='acc'?'jedną':'jedna';if(n===0)return 'zero';if(n>=1000)return String(n);
+  const w=[],h=Math.floor(n/100),r=n%100,t=Math.floor(r/10),u=r%10;if(h)w.push(WH[h]);
+  if(r>=10&&r<20)w.push(W10[r-10]);else{if(t)w.push(WT[t]);if(u)w.push(u===2?'dwie':W1[u])}return w.join(' ')}
+const numUnit=(n,u,cas='acc')=>`${numWordsF(n,cas)} ${plForm(n,UNITS[u][cas])}`;
 function spokenDur(sec,cas='acc'){sec=Math.max(0,Math.round(sec));const h=Math.floor(sec/3600),m=Math.floor(sec%3600/60),x=sec%60;
   const parts=[];if(h)parts.push(numUnit(h,'h',cas));if(m)parts.push(numUnit(m,'m',cas));if(x&&!h)parts.push(numUnit(x,'s',cas));
   if(!parts.length)return numUnit(0,'s',cas);return parts.length>1?parts.slice(0,-1).join(' ')+' i '+parts.at(-1):parts[0]}
@@ -585,13 +593,14 @@ function delHist(ts){sheetConfirm('Usunąć wpis z historii?',()=>{S.history=S.h
 function openSettings(){const s=S.settings;sheet(`<h2>Ustawienia</h2>
   <label>Szacowanie czasu zadania z pomiarów</label><select id="sE">${[['avg','Średnia'],['median','Mediana'],['p80','80. percentyl (bezpieczniej)'],['max','Najdłuższy pomiar']].map(([v,l])=>`<option value="${v}" ${s.estimate===v?'selected':''}>${l}</option>`).join('')}</select>
   <label>Dodatkowy zapas czasu: <b id="sBv">${s.buffer}</b>%</label><input type="range" id="sB" min="0" max="50" step="5" value="${s.buffer}" oninput="$('sBv').textContent=this.value">
+  <label><input type="checkbox" id="sM" ${s.mute?'':'checked'} style="width:auto"> Komunikaty głosowe (można też wyciszyć przyciskiem 🔊 u góry)</label>
   <label><input type="checkbox" id="sL" ${s.learn?'checked':''} style="width:auto"> Ucz się z trybu pilnowania (przycisk „Gotowe” zapisuje rzeczywisty czas)</label>
   <label>Klucz Google API (Routes API)</label><input id="sK" value="${esc(s.apiKey)}" placeholder="AIza…">
   <div class="mut">Klucz z console.cloud.google.com z włączonym „Routes API”. Przechowywany tylko na tym telefonie.</div>
   <div class="row" style="margin-top:12px"><button class="grow" onclick="testSound()">🔊 Test dźwięków</button><button class="grow" onclick="exportData()">📋 Kopia danych</button></div>
   <div class="row" style="margin-top:8px"><button class="grow" onclick="importData()">📥 Przywróć dane</button></div>
   <button class="pri" style="width:100%;margin-top:14px" onclick="saveSettings()">Zapisz</button>${N?'<h2>Budzik</h2><div data-perms></div>':''}`);document.querySelectorAll('#sheetBody [data-perms]').forEach(e=>renderPerms(e))}
-function saveSettings(){Object.assign(S.settings,{estimate:$('sE').value,buffer:+$('sB').value,learn:$('sL').checked,apiKey:$('sK').value.trim()});save();closeSheet();renderTasks();renderPlan()}
+function saveSettings(){Object.assign(S.settings,{estimate:$('sE').value,buffer:+$('sB').value,learn:$('sL').checked,mute:!$('sM').checked,apiKey:$('sK').value.trim()});save();closeSheet();renderTasks();renderPlan();renderMute()}
 function testSound(){audio();beep3();setTimeout(beepLong,1200);setTimeout(()=>say('Teraz: prysznic. Masz 10 minut.'),3200)}
 function exportData(){const t=JSON.stringify({tasks:S.tasks,history:S.history,plans:S.plans,settings:{...S.settings,apiKey:''}});
   sheet(`<h2>Kopia danych</h2><textarea id="exp" style="width:100%;height:200px;background:#273449;color:#e2e8f0;border-radius:10px">${esc(t)}</textarea><div class="row" style="margin-top:8px"><button class="pri grow" onclick="if(N){N.copy($('exp').value);toast('Skopiowano');return}navigator.clipboard.writeText($('exp').value).then(()=>toast('Skopiowano'),()=>{$('exp').select();toast('Zaznaczono – skopiuj ręcznie')})">Kopiuj</button><button class="grow" onclick="closeSheet()">Zamknij</button></div>`)}
@@ -606,7 +615,10 @@ function go(v){document.querySelectorAll('.view').forEach(e=>e.classList.toggle(
   $('fab').style.display=$('fab2').style.display=v==='data'?'block':'none';$('ttl').textContent={home:'Zdążę!',data:'Pomiary',plan:'Plan',guard:'Pilnowanie'}[v];if(v==='guard')renderGuard();if(v==='plan')renderPlan();window.scrollTo(0,0)}
 document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{audio();go(b.dataset.v)});
 $('voiceBtn').onclick=()=>{audio();toggleVoice()};
-function renderAll(){renderTasks();renderPlan();renderGuard();renderHome()}
+function toggleMute(){S.settings.mute=!S.settings.mute;save();renderMute();
+  if(S.settings.mute){if(N)N.speak('',uid());else try{speechSynthesis.cancel()}catch(e){}toast('🔇 Głos wyciszony – sygnały dźwiękowe zostają')}else{toast('🔊 Głos włączony');say('Głos włączony.')}}
+function renderMute(){const b=$('muteBtn');if(b){b.textContent=S.settings.mute?'🔇':'🔊';b.style.color=S.settings.mute?'var(--bad)':''}}
+function renderAll(){renderMute();renderTasks();renderPlan();renderGuard();renderHome()}
 
 /* ========== ZEGAR GŁÓWNY ========== */
 function tick(){const now=Date.now();
