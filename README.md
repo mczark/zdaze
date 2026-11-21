@@ -6,7 +6,7 @@ Trzy tryby:
    - **Czynność** – duży „+” → mówisz nazwę → gotowe. Okrągły przycisk START/STOP mierzy czas.
    - **🚗 Dojazd** – skąd, dowolna liczba **przystanków** (z czasem postoju), dokąd, środek transportu, dzień i godzina wyjazdu. Czas z Google Maps liczony jest odcinkami (każdy odcinek startuje po przyjeździe + postoju), jako średnia z 3 najbliższych takich dni.
    - Głosem (🎤 w nagłówku): „nowe zadanie prysznic”, „nowy dojazd”, „start prysznic”, „stop”.
-2. **🗓️ Plan**: układasz zadania w kolejności i ustawiasz godzinę końca. Aplikacja liczy wstecz godziny startu i ustawia budzik.
+2. **🗓️ Plany**: dowolnie wiele planów (np. „Do pracy”, „Basen”). Każdy ma zadania w kolejności, godzinę końca i powtarzanie: jednorazowo (data) albo cyklicznie (wybrane dni tygodnia). Aplikacja liczy wstecz godziny startu i sama ustawia najbliższy budzik ze wszystkich aktywnych planów. Wykrywa kolizje: ostrzega, gdy uruchomienia planów nakładałyby się w czasie. Najbliższy budzik można pominąć jednym dotknięciem.
 3. **🛡️ Pilnowanie**: startuje razem z budzikiem i odlicza każde zadanie. Pokazuje, o której zadanie powinno się skończyć według planu; gdy jesteś po czasie, pozwala je skrócić (−1/−2/−5 min, „do planu” lub dowolnie), a przy starcie kolejnego zadania mówi, o ile przekroczono plan. Zadania przechodzą same; „Gotowe” jest opcjonalne. Przycisk „Start” (lub komenda „start”) zeruje timer bieżącego zadania, gdy zaczynasz je z opóźnieniem. W połowie czasu mówi „połowa czasu”, 30 s przed końcem są 3 krótkie piknięcia, na końcu długi głośny sygnał i komunikat głosowy z nazwą następnego zadania. Na koniec pyta „Czy zdążyłeś?” (przyciskiem albo głosem), a odpowiedź trafia do historii na ekranie startowym.
 
 ## Budowanie (GitHub Actions)

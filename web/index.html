@@ -52,6 +52,10 @@ nav button span{font-size:22px}nav button.on{color:var(--acc)}
 .ring .c{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center}
 .wake{position:fixed;inset:0;background:var(--warn);color:#000;z-index:16;display:none;flex-direction:column;align-items:center;justify-content:center;font-size:28px;font-weight:700;gap:12px}
 .wake.on{display:flex}
+.seg{gap:0;background:var(--card2);border-radius:12px;padding:3px}.seg button{background:transparent;padding:8px}.seg button.on{background:var(--acc);color:#04263a;font-weight:600}
+.days7{display:grid;grid-template-columns:repeat(7,1fr);gap:5px;margin-top:10px}.days7 button{padding:10px 0;font-weight:600}.days7 button.on{background:var(--acc);color:#04263a}
+.sw{position:relative;width:52px;height:30px;flex:none;margin:0}.sw input{opacity:0;width:0;height:0}.sw span{position:absolute;inset:0;background:#475569;border-radius:99px;transition:.2s}
+.sw span:before{content:'';position:absolute;width:24px;height:24px;left:3px;top:3px;background:#fff;border-radius:50%;transition:.2s}.sw input:checked+span{background:var(--ok)}.sw input:checked+span:before{transform:translateX(22px)}
 .voiceon{background:var(--bad)!important;color:#fff!important}
 </style>
 </head>
@@ -77,17 +81,7 @@ nav button span{font-size:22px}nav button.on{color:var(--acc)}
 </section>
 
 <!-- PLANOWANIE -->
-<section class="view" id="v-plan">
-  <div class="card">
-    <div class="row"><div class="grow"><label>Muszę skończyć o</label><input type="time" id="pDeadline"></div><div class="grow"><label>Dnia</label><input type="date" id="pDate"></div></div>
-  </div>
-  <div class="card"><div id="pItems"></div>
-    <div class="row" style="margin-top:10px"><select id="pAdd" class="grow"></select><button onclick="planAdd()">Dodaj</button></div>
-  </div>
-  <div class="card" id="pSummary"></div>
-  <button class="pri" style="width:100%;padding:16px" onclick="armPlan()">⏰ Ustaw budzik</button>
-  <div id="pAlarmOpts"></div>
-</section>
+<section class="view" id="v-plan"><div id="planView"></div></section>
 
 <!-- PILNOWANIE -->
 <section class="view" id="v-guard"><div id="guard"></div></section>
@@ -111,10 +105,11 @@ nav button span{font-size:22px}nav button.on{color:var(--acc)}
 'use strict';
 /* ========== STAN ========== */
 const LS='zdaze.v1';
-const def={tasks:[],plan:{deadline:'07:45',date:'',items:[],armed:false,alarmAt:0},run:null,history:[],
+const def={tasks:[],plans:[],alarm:null,run:null,history:[],
   settings:{apiKey:'',estimate:'avg',buffer:10,learn:true,lang:'pl-PL'},running:null};
 let S;try{S=Object.assign(structuredClone(def),JSON.parse(localStorage.getItem(LS)||'{}'))}catch(e){S=structuredClone(def)}
-S.settings=Object.assign({},def.settings,S.settings);S.plan=Object.assign({},def.plan,S.plan);
+S.settings=Object.assign({},def.settings,S.settings);
+if(S.plan){if(S.plan.items&&S.plan.items.length&&!S.plans.length)S.plans.push({id:Math.random().toString(36).slice(2,9),name:'Mój plan',deadline:S.plan.deadline||'07:45',items:S.plan.items,repeat:'once',date:S.plan.date||'',days:[],enabled:!!S.plan.armed,skip:[]});delete S.plan}
 S.tasks.forEach(t=>{if(!t.type)t.type=t.maps?'travel':'activity';if(t.maps&&!t.maps.stops)t.maps.stops=[]});
 const save=()=>{try{localStorage.setItem(LS,JSON.stringify(S))}catch(e){}};
 const $=id=>document.getElementById(id);
@@ -133,8 +128,8 @@ window.__ttsDone=id=>{const f=nCb.tts[id];delete nCb.tts[id];f&&f()};
 window.__srPartial=t=>{nCb.rec&&nCb.rec.onresult&&nCb.rec.onresult(t,false)};
 window.__srFinal=t=>{nCb.rec&&nCb.rec.onresult&&nCb.rec.onresult(t,true)};
 window.__srEnd=err=>{const r=nCb.rec;nCb.rec=null;if(r){if(err&&r.onerror)r.onerror({error:err});r.onend&&r.onend()}};
-window.__nativeAlarm=()=>{if(S.plan.armed&&!S.run)startRun(true);else if(!S.run){toast('⏰ Budzik sam otworzył aplikację – działa!',5000);say('Test budzika udany.')}};
-window.__resume=()=>{document.querySelectorAll('[data-perms]').forEach(e=>renderPerms(e));tick()};
+window.__nativeAlarm=()=>{if(S.alarm&&!S.run&&Date.now()>=S.alarm.at-120000)startRun(S.alarm.planId,S.alarm.deadline,true);else if(!S.run){toast('⏰ Budzik sam otworzył aplikację – działa!',5000);say('Test budzika udany.')}};
+window.__resume=()=>{if(!S.run)rearm();document.querySelectorAll('[data-perms]').forEach(e=>renderPerms(e));tick()};
 /* Uprawnienia potrzebne, by budzik sam otwierał aplikację (tylko Android) */
 const PERMS=[['notif','Powiadomienia','dzwonek i powiadomienie budzika'],['overlay','Wyświetlanie nad innymi aplikacjami','pozwala budzikowi samemu otworzyć aplikację'],
   ['fullscreen','Powiadomienia pełnoekranowe','pokazuje aplikację na zablokowanym ekranie'],['battery','Bez ograniczeń baterii','system nie uśpi budzika'],['exact','Dokładne alarmy','budzik co do minuty']];
@@ -282,7 +277,7 @@ function saveTravel(close){travelRead();
   t.name=TD.name;t.maps=maps;save();renderTasks();renderPlan();if(close){closeSheet();TD=null}return t}
 function delSample(id,j){const t=S.tasks.find(x=>x.id===id);t.samples.splice(j,1);save();reopen(id);renderTasks()}
 function addManual(id){const v=parseFloat($('tManual').value);if(!(v>0))return;const t=S.tasks.find(x=>x.id===id);t.samples.push({sec:Math.round(v*60),ts:Date.now(),src:'manual'});save();reopen(id);renderTasks()}
-function delTask(id){sheetConfirm('Usunąć zadanie?',()=>{S.tasks=S.tasks.filter(x=>x.id!==id);S.plan.items=S.plan.items.filter(i=>i.taskId!==id);if(S.running&&S.running.id===id)S.running=null;TD=null;save();closeSheet();renderTasks();renderPlan()})}
+function delTask(id){sheetConfirm('Usunąć zadanie?',()=>{S.tasks=S.tasks.filter(x=>x.id!==id);S.plans.forEach(p=>p.items=p.items.filter(i=>i.taskId!==id));if(S.running&&S.running.id===id)S.running=null;TD=null;save();closeSheet();renderTasks();renderPlan()})}
 function nextOcc(day,time,k){const [h,mi]=time.split(':').map(Number);const d=new Date();d.setHours(h,mi,0,0);let add=(Number(day)-d.getDay()+7)%7;if(add===0&&d<=new Date())add=7;d.setDate(d.getDate()+add+7*k);return d}
 function mapsOpen(){travelRead();const tm={DRIVE:'driving',TRANSIT:'transit',WALK:'walking',BICYCLE:'bicycling',TWO_WHEELER:'two-wheeler'}[TD.mode];const st=TD.stops.filter(s=>s.addr).map(s=>s.addr);
   const href=`https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(TD.origin)}&destination=${encodeURIComponent(TD.dest)}&travelmode=${tm}`+(st.length?`&waypoints=${encodeURIComponent(st.join('|'))}`:'');
@@ -306,67 +301,129 @@ async function mapsFetch(){const t=saveTravel(false);const m=t.maps;renderTravel
   const stay=m.stops.reduce((a,s)=>a+(s.stay||0)*60,0);
   $('mOut').innerHTML=`<b>Średnio ${fmtMin(avg)}</b> – dodano jako pomiar.<br>`+pts.slice(0,-1).map((p,i)=>`${esc(short(p))} → ${esc(short(pts[i+1]))}: ${fmtMin(legSum[i]/3)}`).join('<br>')+(stay?`<br>Postoje: ${fmtMin(stay)}`:'')}
 
-/* ========== PLANOWANIE ========== */
-function defaultDate(){const [h,m]=S.plan.deadline.split(':').map(Number);const d=new Date();d.setHours(h,m,0,0);const total=planTotal();if(d.getTime()-total*1000<Date.now())d.setDate(d.getDate()+1);return d.toISOString().slice(0,10)}
-const planTotal=()=>S.plan.items.reduce((a,i)=>a+i.sec,0);
-function deadlineTs(){const [y,mo,d]=(S.plan.date||defaultDate()).split('-').map(Number);const [h,m]=S.plan.deadline.split(':').map(Number);return new Date(y,mo-1,d,h,m,0,0).getTime()}
-function schedule(){let t=deadlineTs()-planTotal()*1000;return S.plan.items.map(i=>{const s=t;t+=i.sec*1000;return{...i,start:s,end:t}})}
-function planAdd(){const id=$('pAdd').value;const t=S.tasks.find(x=>x.id===id);if(!t)return;S.plan.items.push({taskId:id,sec:estimate(t)||300});save();renderPlan()}
-function planMove(i,d){const a=S.plan.items,j=i+d;if(j<0||j>=a.length)return;[a[i],a[j]]=[a[j],a[i]];save();renderPlan()}
-function planDel(i){S.plan.items.splice(i,1);save();renderPlan()}
-function planSet(i,v){S.plan.items[i].sec=Math.max(0,Math.round(parseFloat(v||0)*60));save();renderPlan(true)}
-function planRefresh(i){const it=S.plan.items[i];const t=S.tasks.find(x=>x.id===it.taskId);if(t&&estimate(t)){it.sec=estimate(t);save();renderPlan()}}
-function renderPlan(keepFocus){
-  $('pDeadline').value=S.plan.deadline;$('pDate').value=S.plan.date||defaultDate();
-  $('pAdd').innerHTML=S.tasks.length?S.tasks.map(t=>`<option value="${t.id}">${t.type==='travel'?'🚗 ':''}${esc(t.name)} (${t.samples.length?fmtMin(estimate(t)):'?'})</option>`).join(''):'<option value="">— najpierw dodaj zadania w Pomiarach —</option>';
-  const sch=schedule();
-  if(!keepFocus)$('pItems').innerHTML=sch.length?sch.map((it,i)=>{const t=S.tasks.find(x=>x.id===it.taskId);return `<div class="pitem"><span class="time" data-st="${i}">${hhmm(it.start)}</span><span class="pname">${esc(t?t.name:'?')}</span>
+/* ========== PLANOWANIE (wiele planów, cykliczność, kolizje) ========== */
+const DSH=['Nd','Pn','Wt','Śr','Cz','Pt','So'];const DORDER=[1,2,3,4,5,6,0];
+let editPlanId=null;
+const EP=()=>S.plans.find(p=>p.id===editPlanId);
+const planById=id=>S.plans.find(p=>p.id===id);
+const planTotal=p=>(p?p.items:[]).reduce((a,i)=>a+i.sec,0);
+const ymd=d=>`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+function atTime(day,hm){const [h,m]=hm.split(':').map(Number);const d=new Date(day);d.setHours(h,m,0,0);return d.getTime()}
+function schedule(p,deadline){let t=deadline-planTotal(p)*1000;return p.items.map(i=>{const s=t;t+=i.sec*1000;return{...i,start:s,end:t}})}
+function defaultDate(p){const d=new Date();if(atTime(d,p.deadline)-planTotal(p)*1000<Date.now())d.setDate(d.getDate()+1);return ymd(d)}
+/* wystąpienia planu w oknie [from,to]: {deadline,start} */
+function occurrences(p,from,to){const tot=planTotal(p)*1000,out=[];
+  if(p.repeat==='weekly'){const d=new Date(from-864e5);d.setHours(0,0,0,0);
+    while(d.getTime()<=to+864e5){if((p.days||[]).includes(d.getDay())){const dl=atTime(d,p.deadline);if(dl>=from&&dl-tot<=to)out.push({deadline:dl,start:dl-tot})}d.setDate(d.getDate()+1)}}
+  else{const [y,mo,da]=(p.date||defaultDate(p)).split('-').map(Number);const dl=atTime(new Date(y,mo-1,da),p.deadline);if(dl>=from&&dl-tot<=to)out.push({deadline:dl,start:dl-tot})}
+  return out.filter(o=>!(p.skip||[]).includes(o.deadline))}
+function planNext(p,after){return occurrences(p,after,after+15*864e5).filter(o=>o.start>after).sort((a,b)=>a.start-b.start)[0]||null}
+function repeatText(p){if(p.repeat==='weekly'){const d=p.days||[];if(d.length===7)return'codziennie';if(d.length===5&&[1,2,3,4,5].every(x=>d.includes(x)))return'dni robocze';return d.length?DORDER.filter(x=>d.includes(x)).map(x=>DSH[x]).join(' '):'brak dni'}
+  return 'jednorazowo '+new Date((p.date||defaultDate(p))+'T12:00').toLocaleDateString('pl',{weekday:'short',day:'numeric',month:'numeric'})}
+const fmtOcc=ts=>new Date(ts).toLocaleDateString('pl',{weekday:'short',day:'numeric',month:'numeric'})+' '+hhmm(ts);
+/* kolizje: przedziały [start, koniec] wystąpień nakładają się w ciągu najbliższych 14 dni */
+function conflicts(p){if(!p.items.length)return[];const now=Date.now(),to=now+14*864e5,mine=occurrences(p,now,to),res=[];
+  S.plans.forEach(q=>{if(q.id===p.id||!q.enabled||!q.items.length)return;const theirs=occurrences(q,now,to);
+    const seen=new Set();
+    for(const a of mine)for(const b of theirs)if(a.start<b.deadline&&b.start<a.deadline){
+      const key=p.repeat==='weekly'&&q.repeat==='weekly'?new Date(a.start).getDay():a.start;if(!seen.has(key)){seen.add(key);res.push({q,a,b,weekly:p.repeat==='weekly'&&q.repeat==='weekly'})}break}});
+  return res}
+function conflictText(c){const wk=c.weekly;
+  return `„${esc(c.q.name)}” – ${wk?'co '+new Date(c.a.start).toLocaleDateString('pl',{weekday:'long'}):fmtOcc(c.a.start).replace(/ \d+:\d+$/,'')}: ${hhmm(c.a.start)}–${hhmm(c.a.deadline)} vs ${hhmm(c.b.start)}–${hhmm(c.b.deadline)}`}
+/* najbliższy budzik ze wszystkich aktywnych planów */
+function rearm(){const now=Date.now();let best=null;
+  S.plans.forEach(p=>{if(!p.enabled||!p.items.length)return;const o=planNext(p,now);if(o&&(!best||o.start<best.at))best={planId:p.id,at:o.start,deadline:o.deadline}});
+  const prev=S.alarm;S.alarm=best;save();
+  if(N){if(best&&(!prev||prev.at!==best.at||prev.planId!==best.planId))N.setAlarm(best.at,'Zdążę! – '+planById(best.planId).name);else if(!best&&prev)N.cancelAlarm()}
+  if(best&&!S.run)requestWake()}
+function newPlan(){const p={id:uid(),name:'Plan '+(S.plans.length+1),deadline:'07:45',items:[],repeat:'weekly',days:[1,2,3,4,5],date:'',enabled:false,skip:[]};S.plans.push(p);save();openPlan(p.id)}
+function openPlan(id){editPlanId=id;renderPlan();window.scrollTo(0,0)}
+function closePlan(){editPlanId=null;renderPlan()}
+function dupPlan(){const p=EP();const q=JSON.parse(JSON.stringify(p));q.id=uid();q.name=p.name+' (kopia)';q.enabled=false;q.skip=[];S.plans.push(q);save();openPlan(q.id);toast('Utworzono kopię')}
+function delPlan(){const p=EP();sheetConfirm(`Usunąć plan „${p.name}”?`,()=>{S.plans=S.plans.filter(x=>x.id!==p.id);editPlanId=null;closeSheet();rearm();renderAll()})}
+function planField(k,v){const p=EP();p[k]=v;if(k==='deadline'&&p.repeat==='once')p.date=p.date||'';p.skip=[];save();rearm();renderPlan()}
+function setRepeat(r){const p=EP();p.repeat=r;if(r==='once'&&!p.date)p.date=defaultDate(p);if(r==='weekly'&&!(p.days||[]).length)p.days=[1,2,3,4,5];save();rearm();renderPlan()}
+function toggleDay(d){const p=EP();p.days=p.days||[];p.days.includes(d)?p.days=p.days.filter(x=>x!==d):p.days.push(d);save();rearm();renderPlan()}
+function setDays(a){EP().days=a;save();rearm();renderPlan()}
+async function togglePlan(id,on){const p=planById(id);if(on){
+    if(!p.items.length){toast('Dodaj najpierw zadania do planu');renderPlan();return}
+    if(!planNext(p,Date.now())){toast(p.repeat==='weekly'?'Wybierz dni tygodnia':'Godzina startu już minęła – zmień datę');renderPlan();return}
+    const cf=conflicts(p);
+    if(cf.length){sheet(`<h2>⚠️ Kolizja planów</h2><p>Plan „${esc(p.name)}” nakłada się z:</p>${cf.map(c=>`<p class="mut">• ${conflictText(c)}</p>`).join('')}
+      <p class="mut">Jeśli włączysz oba, wcześniejszy plan ma pierwszeństwo – drugi zostanie pominięty, jeśli w jego godzinie startu pierwszy będzie jeszcze trwał.</p>
+      <div class="row"><button class="grow" onclick="closeSheet();renderPlan()">Anuluj</button><button class="bad grow" onclick="closeSheet();enablePlan('${id}')">Włącz mimo to</button></div>`);return}
+    enablePlan(id)}else{p.enabled=false;save();rearm();renderAll();toast('Budzik planu wyłączony')}}
+async function enablePlan(id){const p=planById(id);p.enabled=true;p.skip=[];save();audio();rearm();
+  if(!N)try{if('Notification' in window&&Notification.permission==='default')await Notification.requestPermission()}catch(e){}
+  if(!permsOk())toast('Uwaga: brakuje uprawnień – budzik może nie otworzyć aplikacji sam. Zobacz listę w planie.',6000);
+  renderAll();const o=planNext(p,Date.now());say(`Plan ${p.name} włączony. Najbliższy start ${fmtOcc(o.start).split(' ').pop()}.`)}
+function skipNext(){const a=S.alarm;if(!a)return;const p=planById(a.planId);
+  if(p.repeat==='once')p.enabled=false;else{p.skip=(p.skip||[]).filter(t=>t>Date.now()-864e5);p.skip.push(a.deadline)}
+  save();rearm();renderAll();toast('Pominięto najbliższy budzik')}
+function planAdd(){const id=$('pAdd').value;const t=S.tasks.find(x=>x.id===id);if(!t)return;EP().items.push({taskId:id,sec:estimate(t)||300});save();rearm();renderPlan()}
+function planMove(i,d){const a=EP().items,j=i+d;if(j<0||j>=a.length)return;[a[i],a[j]]=[a[j],a[i]];save();renderPlan()}
+function planDel(i){EP().items.splice(i,1);save();rearm();renderPlan()}
+function planSet(i,v){EP().items[i].sec=Math.max(0,Math.round(parseFloat(v||0)*60));save();rearm();renderPlan(true)}
+function planRefresh(i){const it=EP().items[i];const t=S.tasks.find(x=>x.id===it.taskId);if(t&&estimate(t)){it.sec=estimate(t);save();rearm();renderPlan()}}
+
+function renderPlan(keep){const el=$('planView');const p=EP();if(!p){editPlanId=null;renderPlanList(el);renderHome();return}
+  const now=Date.now(),o=planNext(p,now),dl=o?o.deadline:occurrences(p,0,now+30*864e5).map(x=>x.deadline).pop()||atTime(new Date(),p.deadline);
+  const sch=schedule(p,dl),cf=conflicts(p),st=sch.length?sch[0].start:dl;
+  if(keep){sch.forEach((it,i)=>{const e=document.querySelector(`[data-st="${i}"]`);if(e)e.textContent=hhmm(it.start)});const s=$('pSummary');if(s)s.innerHTML=summaryHtml();renderHome();return}
+  function summaryHtml(){return `<div class="row"><div class="stat"><b>${hhmm(st)}</b><span class="mut">start / budzik</span></div><div class="stat"><b>${fmtMin(planTotal(p))}</b><span class="mut">łącznie</span></div><div class="stat"><b>${p.deadline}</b><span class="mut">koniec</span></div></div>
+    <p class="mut" style="text-align:center;margin:8px 0 0">${o?`Najbliższe uruchomienie: <b>${fmtOcc(o.start)}</b>`:(p.items.length?'<span style="color:var(--bad)">Brak przyszłego uruchomienia – zmień datę lub dni.</span>':'')}</p>`}
+  el.innerHTML=`<button class="ghost" onclick="closePlan()" style="padding-left:0">‹ Wszystkie plany</button>
+  <div class="card"><label>Nazwa planu</label><input value="${esc(p.name)}" onchange="planField('name',this.value.trim()||'Plan')">
+    <div class="row"><div class="grow"><label>Muszę skończyć o</label><input type="time" value="${p.deadline}" onchange="planField('deadline',this.value)"></div></div>
+    <label>Powtarzanie</label>
+    <div class="row seg"><button class="grow ${p.repeat!=='weekly'?'on':''}" onclick="setRepeat('once')">Jednorazowo</button><button class="grow ${p.repeat==='weekly'?'on':''}" onclick="setRepeat('weekly')">🔁 Cyklicznie</button></div>
+    ${p.repeat==='weekly'?`<div class="days7">${DORDER.map(d=>`<button class="${(p.days||[]).includes(d)?'on':''}" onclick="toggleDay(${d})">${DSH[d]}</button>`).join('')}</div>
+      <div class="row" style="margin-top:6px;gap:4px;font-size:14px;white-space:nowrap"><button class="ghost grow" onclick="setDays([1,2,3,4,5])">Dni robocze</button><button class="ghost grow" onclick="setDays([0,6])">Weekend</button><button class="ghost grow" onclick="setDays([0,1,2,3,4,5,6])">Codziennie</button></div>`
+    :`<label>Dnia</label><input type="date" value="${p.date||defaultDate(p)}" onchange="planField('date',this.value)">`}
+  </div>
+  ${cf.length?`<div class="card" style="border:1px solid var(--bad)"><b>⚠️ Kolizja z innymi planami</b>${cf.map(c=>`<p class="mut" style="margin:6px 0 0">• ${conflictText(c)}</p>`).join('')}<p class="mut" style="font-size:12px">Wcześniejszy plan ma pierwszeństwo – drugi zostanie pominięty, jeśli w jego godzinie startu pierwszy będzie jeszcze trwał.</p></div>`:''}
+  <div class="card"><div id="pItems">${sch.length?sch.map((it,i)=>{const t=S.tasks.find(x=>x.id===it.taskId);return `<div class="pitem"><span class="time" data-st="${i}">${hhmm(it.start)}</span><span class="pname">${t&&t.type==='travel'?'🚗 ':''}${esc(t?t.name:'?')}</span>
     <input type="number" min="0" step="0.5" value="${+(it.sec/60).toFixed(1)}" onchange="planSet(${i},this.value)" title="minuty"><span class="mut">min</span>
     <button class="ghost" onclick="planRefresh(${i})" title="Weź szacunek z pomiarów">↻</button><button class="ghost" onclick="planMove(${i},-1)">▲</button><button class="ghost" onclick="planMove(${i},1)">▼</button><button class="ghost" onclick="planDel(${i})">✕</button></div>`}).join('')
-    :'<p class="mut">Dodaj zadania w kolejności wykonywania. Czasy wezmą się z pomiarów (możesz je zmienić).</p>';
-  else sch.forEach((it,i)=>{const e=document.querySelector(`[data-st="${i}"]`);if(e)e.textContent=hhmm(it.start)});
-  const st=sch.length?sch[0].start:deadlineTs();
-  $('pSummary').innerHTML=`<div class="row"><div class="stat"><b>${hhmm(st)}</b><span class="mut">start / budzik</span></div><div class="stat"><b>${fmtMin(planTotal())}</b><span class="mut">łącznie</span></div><div class="stat"><b>${S.plan.deadline}</b><span class="mut">koniec</span></div></div>
-  ${st<Date.now()&&sch.length?'<p style="color:var(--bad)">⚠️ Start wypada w przeszłości – zmień datę lub godzinę.</p>':''}
-  ${S.plan.armed?`<p style="color:var(--ok);text-align:center">✅ Budzik ustawiony na ${new Date(S.plan.alarmAt).toLocaleString('pl',{weekday:'short',hour:'2-digit',minute:'2-digit'})}</p>`:''}`;
-  renderHome()}
-$('pDeadline').onchange=e=>{S.plan.deadline=e.target.value;S.plan.date='';save();renderPlan()};
-$('pDate').onchange=e=>{S.plan.date=e.target.value;save();renderPlan()};
-
-async function armPlan(){
-  if(!S.plan.items.length)return toast('Dodaj najpierw zadania do planu');
-  audio();const sch=schedule();const at=sch[0].start;if(at<Date.now())return toast('Godzina startu już minęła');
-  S.plan.date=S.plan.date||defaultDate();S.plan.armed=true;S.plan.alarmAt=at;save();requestWake();
-  if(N)N.setAlarm(at,'Zdążę! – '+(S.tasks.find(x=>x.id===sch[0].taskId)||{name:'start'}).name);
-  if(!N)try{if('Notification' in window&&Notification.permission==='default')await Notification.requestPermission()}catch(e){}
-  const d=new Date(at);
-  $('pAlarmOpts').innerHTML=`<div class="card"><b>Budzik w aplikacji ustawiony na ${hhmm(at)}.</b>
-   ${N?`<p class="mut">Aplikacja uruchomi się sama o tej godzinie – nawet gdy telefon jest zablokowany. Możesz dodatkowo ustawić budzik w zegarze:</p>
-   <div data-perms></div>
-   <button style="width:100%;margin:4px 0" onclick="N.systemAlarmAt(${at},'Zdążę! – start ${d.toLocaleDateString('pl',{weekday:'long',day:'numeric',month:'numeric'})}')">⏰ Dodaj też do aplikacji Zegar (${d.toLocaleDateString('pl',{weekday:'long'})} ${hhmm(at)})</button>
-   ${at-Date.now()>864e5?`<p class="mut" style="font-size:13px">⚠️ Zegar nie przyjmuje daty, tylko dzień tygodnia – utworzy budzik <b>powtarzany co ${d.toLocaleDateString('pl',{weekday:'long'})}</b>. Wyłącz go po użyciu albo dodaj go dopiero w przeddzień (w ciągu 24 h przed budzikiem będzie jednorazowy).</p>`:''}`:`<p class="mut">Zostaw aplikację otwartą (ekran nie zgaśnie, telefon najlepiej na ładowarce). Dla pewności dodaj też budzik systemowy:</p>
+    :'<p class="mut">Dodaj zadania w kolejności wykonywania. Czasy wezmą się z pomiarów (możesz je zmienić).</p>'}</div>
+    <div class="row" style="margin-top:10px"><select id="pAdd" class="grow">${S.tasks.length?S.tasks.map(t=>`<option value="${t.id}">${t.type==='travel'?'🚗 ':''}${esc(t.name)} (${t.samples.length?fmtMin(estimate(t)):'?'})</option>`).join(''):'<option value="">— najpierw dodaj zadania w Pomiarach —</option>'}</select><button onclick="planAdd()">Dodaj</button></div></div>
+  <div class="card" id="pSummary">${summaryHtml()}</div>
+  <button class="${p.enabled?'ok':'pri'}" style="width:100%;padding:16px" onclick="togglePlan('${p.id}',${!p.enabled})">${p.enabled?'✅ Budzik włączony – dotknij, aby wyłączyć':'⏰ Włącz budzik'}</button>
+  ${p.enabled&&o?alarmExtras(o.start,o.deadline,p):''}
+  <div class="row" style="margin-top:10px"><button class="grow" onclick="startRun('${p.id}',null,false)" ${p.items.length?'':'disabled'}>▶ Zacznij teraz</button><button class="grow" onclick="dupPlan()">Duplikuj</button><button class="bad grow" onclick="delPlan()">Usuń</button></div>`;
+  el.querySelectorAll('[data-perms]').forEach(e=>renderPerms(e));renderHome()}
+function alarmExtras(at,deadline,p){const d=new Date(at);
+  return N?`<div data-perms></div>
+   <button style="width:100%;margin:4px 0" onclick="N.systemAlarmAt(${at},'Zdążę! – ${esc(p.name).replace(/'/g,'')}')">⏰ Dodaj też do aplikacji Zegar (${d.toLocaleDateString('pl',{weekday:'long'})} ${hhmm(at)})</button>
+   ${at-Date.now()>864e5||p.repeat==='weekly'?`<p class="mut" style="font-size:13px">Zegar nie przyjmuje daty – dla odległego terminu utworzy budzik powtarzany w ten dzień tygodnia. Budzik tej aplikacji obsługuje cykliczność sam, Zegar jest tylko zapasowy.</p>`:''}`
+  :`<div class="card"><p class="mut">Zostaw aplikację otwartą (ekran nie zgaśnie). Dla pewności dodaj budzik systemowy:</p>
    <a href="intent:#Intent;action=android.intent.action.SET_ALARM;i.android.intent.extra.alarm.HOUR=${d.getHours()};i.android.intent.extra.alarm.MINUTES=${d.getMinutes()};S.android.intent.extra.alarm.MESSAGE=${encodeURIComponent('Zdążę! – start')};B.android.intent.extra.alarm.SKIP_UI=false;end"><button style="width:100%;margin:4px 0">⏰ Budzik systemowy (Android)</button></a>
-   <button style="width:100%;margin:4px 0" onclick="downloadIcs()">📅 Przypomnienie w kalendarzu (.ics)</button>`}
-   <button class="ghost" style="width:100%" onclick="disarm()">Anuluj budzik</button></div>`;
-  document.querySelectorAll('[data-perms]').forEach(e=>renderPerms(e));
-  if(!permsOk())toast('Uwaga: brakuje uprawnień – budzik może nie otworzyć aplikacji sam. Zobacz listę poniżej.',6000);
-  renderPlan();renderGuard();say(`Budzik ustawiony na ${d.getHours()}:${pad(d.getMinutes())}`)}
-function disarm(){if(N)N.cancelAlarm();S.plan.armed=false;save();$('pAlarmOpts').innerHTML='';renderPlan();renderGuard();toast('Budzik anulowany')}
-function downloadIcs(){const sch=schedule();const f=ts=>new Date(ts).toISOString().replace(/[-:]/g,'').replace(/\.\d+/,'');
+   <button style="width:100%;margin:4px 0" onclick="downloadIcs('${p.id}',${deadline})">📅 Przypomnienie w kalendarzu (.ics)</button></div>`}
+function renderPlanList(el){const now=Date.now();const a=S.alarm,ap=a&&planById(a.planId);
+  el.innerHTML=`${ap?`<div class="card" style="text-align:center"><div class="mut">Najbliższy budzik</div><div class="big">${hhmm(a.at)}</div><div class="mut">${new Date(a.at).toLocaleDateString('pl',{weekday:'long',day:'numeric',month:'long'})} · ${esc(ap.name)}</div><button class="ghost" onclick="skipNext()">Pomiń ten budzik</button></div>`:''}
+  ${S.plans.map(p=>{const o=planNext(p,now),cf=p.enabled?conflicts(p):[];const tot=planTotal(p);
+    return `<div class="card" onclick="openPlan('${p.id}')"><div class="row"><div class="grow"><div style="font-weight:600;font-size:17px">${esc(p.name)}</div>
+      <div class="mut">${p.repeat==='weekly'?'🔁 ':''}${repeatText(p)} · koniec ${p.deadline} · ${p.items.length} zadań, ${fmtMin(tot)}</div>
+      <div class="mut" style="font-size:13px">${p.enabled?(o?`⏰ następny start: ${fmtOcc(o.start)}`:'brak przyszłego uruchomienia'):'budzik wyłączony'}</div>
+      ${cf.length?`<div style="color:var(--bad);font-size:13px">⚠️ kolizja z: ${[...new Set(cf.map(c=>c.q.name))].map(esc).join(', ')}</div>`:''}</div>
+      <label class="sw" onclick="event.stopPropagation()"><input type="checkbox" ${p.enabled?'checked':''} onchange="togglePlan('${p.id}',this.checked)"><span></span></label></div></div>`}).join('')||'<div class="card mut" style="text-align:center">Brak planów. Utwórz pierwszy – np. „Do pracy” w dni robocze.</div>'}
+  <button class="pri" style="width:100%;padding:14px" onclick="newPlan()">＋ Nowy plan</button>`}
+function downloadIcs(pid,deadline){const p=planById(pid);const sch=schedule(p,deadline);const f=ts=>new Date(ts).toISOString().replace(/[-:]/g,'').replace(/\.\d+/,'');
   const ev=sch.map((it,i)=>{const t=S.tasks.find(x=>x.id===it.taskId);return `BEGIN:VEVENT\r\nUID:${uid()}@zdaze\r\nDTSTAMP:${f(Date.now())}\r\nDTSTART:${f(it.start)}\r\nDTEND:${f(it.end)}\r\nSUMMARY:${(t?t.name:'Zadanie').replace(/[,;]/g,' ')}\r\n${i===0?'BEGIN:VALARM\r\nACTION:AUDIO\r\nTRIGGER:PT0M\r\nEND:VALARM\r\nBEGIN:VALARM\r\nACTION:DISPLAY\r\nDESCRIPTION:Zdążę! Start\r\nTRIGGER:PT0M\r\nEND:VALARM\r\n':''}END:VEVENT`}).join('\r\n');
   const b=new Blob([`BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Zdaze//PL\r\n${ev}\r\nEND:VCALENDAR`],{type:'text/calendar'});const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='zdaze-plan.ics';a.click()}
 
 /* Wake lock */
 let wl=null;async function requestWake(){if(N){N.keepAwake(true);return}try{if('wakeLock' in navigator&&!wl){wl=await navigator.wakeLock.request('screen');wl.addEventListener('release',()=>wl=null)}}catch(e){}}
-document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&(S.plan.armed||S.run))requestWake()});
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&(S.alarm||S.run))requestWake()});
 
 /* ========== PILNOWANIE ========== */
-function startRun(fromAlarm){
-  const sch=schedule();if(!sch.length)return toast('Plan jest pusty');
-  const now=Date.now();
-  S.run={items:sch.map(i=>({taskId:i.taskId,sec:i.sec})),idx:0,taskStart:now,deadline:fromAlarm?deadlineTs():now+planTotal()*1000,warned:false,half:false,announced:!fromAlarm,asking:false,started:now,lateMsg:''};
+function startRun(planId,deadline,fromAlarm){
+  const p=planById(planId);if(!p||!p.items.length)return toast('Plan jest pusty');
+  const now=Date.now();if(!deadline)deadline=now+planTotal(p)*1000;const sch=schedule(p,deadline);
+  S.run={planId:p.id,planName:p.name,items:sch.map(i=>({taskId:i.taskId,sec:i.sec})),idx:0,taskStart:now,deadline,warned:false,half:false,announced:!fromAlarm,asking:false,started:now,lateMsg:''};
   ensurePlanEnds(S.run);
-  S.plan.armed=false;save();requestWake();go('guard');renderGuard();
+  if(fromAlarm&&p.repeat==='once')p.enabled=false;
+  editPlanId=null;save();rearm();requestWake();go('guard');renderGuard();
   if(fromAlarm){startRing();if(!N)try{new Notification('Zdążę! – pobudka',{body:'Czas zacząć: '+curName()})}catch(e){}}else announce()}
 const curName=()=>{const it=S.run&&S.run.items[S.run.idx];const t=it&&S.tasks.find(x=>x.id===it.taskId);return t?t.name:'zadanie'};
 /* Oryginalne (z planu) godziny końca każdego zadania – liczone wstecz od terminu, niezmienne w trakcie */
@@ -401,16 +458,15 @@ function nextTask(manual){const r=S.run;const it=r.items[r.idx];const actual=(Da
 function askFinish(){const r=S.run;r.asking=true;r.finished=Date.now();save();renderGuard();
   say('Wszystkie zadania zakończone. Czy zdążyłeś?').then(async()=>{if(!S.run||!S.run.asking)return;if(cmdOn)return;const a=await listenOnce('Czy zdążyłeś? Powiedz „tak” lub „nie”');
     if(a&&S.run&&S.run.asking){const t=a.toLowerCase();if(/\btak\b|zdąż/.test(t)&&!/\bnie\b/.test(t))finishRun(true);else if(/\bnie\b/.test(t))finishRun(false)}})}
-function finishRun(ok){const r=S.run;if(!r)return;S.history.push({ts:r.started,deadline:r.deadline,finished:r.finished||Date.now(),ok,n:r.items.length});S.run=null;save();if(N)N.keepAwake(false);
+function finishRun(ok){const r=S.run;if(!r)return;S.history.push({ts:r.started,deadline:r.deadline,finished:r.finished||Date.now(),ok,n:r.items.length,plan:r.planName||''});S.run=null;save();rearm();if(N)N.keepAwake(false);
   say(ok?'Brawo! Zapisane.':'Zapisane. Następnym razem się uda.');renderGuard();renderHome();renderTasks();setTimeout(()=>go('home'),1500)}
-function abortRun(){sheetConfirm('Przerwać pilnowanie? (bez zapisu w historii)',()=>{S.run=null;save();closeSheet();renderGuard()})}
+function abortRun(){sheetConfirm('Przerwać pilnowanie? (bez zapisu w historii)',()=>{S.run=null;save();rearm();closeSheet();renderGuard();renderHome()})}
 
 function renderGuard(){const el=$('guard');const r=S.run;setTimeout(()=>el.querySelectorAll('[data-perms]').forEach(e=>renderPerms(e)),0);
-  if(!r){const sch=schedule();
-    el.innerHTML=S.plan.armed?`<div class="card" style="text-align:center"><div class="mut">Budzik za</div><div class="big" data-alarm>–</div><div class="mut">o ${hhmm(S.plan.alarmAt)} · koniec ${S.plan.deadline}</div><p class="mut">${N?'Możesz zamknąć aplikację – budzik sam ją otworzy.':'Zostaw aplikację otwartą. Ekran pozostanie włączony.'}</p><button class="ghost" onclick="disarm()">Anuluj budzik</button></div>${N?'<div data-perms></div>':''}
-      <button class="pri" style="width:100%;padding:14px" onclick="startRun(false)">▶ Zacznij teraz</button>`
-      :`<div class="card" style="text-align:center"><p>Brak aktywnego budzika.</p><p class="mut">${sch.length?`Plan: ${sch.length} zadań, ${fmtMin(planTotal())}.`:'Ułóż najpierw plan.'}</p>
-      <button class="pri" style="width:100%;padding:14px;margin-bottom:8px" onclick="go('plan')">🗓️ Do planu</button>${sch.length?'<button style="width:100%;padding:14px" onclick="startRun(false)">▶ Zacznij teraz (test)</button>':''}</div>`;return}
+  if(!r){const a=S.alarm,ap=a&&planById(a.planId);const ready=S.plans.filter(p=>p.items.length);
+    el.innerHTML=(ap?`<div class="card" style="text-align:center"><div class="mut">Budzik za</div><div class="big" data-alarm>–</div><div class="mut">${esc(ap.name)} · start ${fmtOcc(a.at)} · koniec ${hhmm(a.deadline)}</div><p class="mut">${N?'Możesz zamknąć aplikację – budzik sam ją otworzy.':'Zostaw aplikację otwartą. Ekran pozostanie włączony.'}</p><button class="ghost" onclick="skipNext()">Pomiń ten budzik</button></div>${N?'<div data-perms></div>':''}`
+      :`<div class="card" style="text-align:center"><p>Brak aktywnego budzika.</p><button class="pri" style="width:100%;padding:14px" onclick="go('plan')">🗓️ Do planów</button></div>`)
+      +(ready.length?`<div class="card"><div class="mut">Zacznij plan teraz</div>${ready.map(p=>`<div class="pitem"><span class="grow">${esc(p.name)} <span class="mut">${fmtMin(planTotal(p))}</span></span><button onclick="startRun('${p.id}',null,false)">▶</button></div>`).join('')}</div>`:'');return}
   if(r.asking){el.innerHTML=`<div class="card" style="text-align:center;padding:30px 14px"><div style="font-size:60px">🏁</div><h2>Czy zdążyłeś?</h2><p class="mut">Termin: ${hhmm(r.deadline)} · koniec zadań: ${hhmm(r.finished)}</p>
     <div class="row"><button class="ok grow" style="padding:18px;font-size:20px" onclick="finishRun(true)">Tak 👍</button><button class="bad grow" style="padding:18px;font-size:20px" onclick="finishRun(false)">Nie 👎</button></div></div>`;return}
   ensurePlanEnds(r);const it=r.items[r.idx];const nx=r.items[r.idx+1];const nt=nx&&S.tasks.find(x=>x.id===nx.taskId);
@@ -440,11 +496,11 @@ function renderHome(){
     $('chart').innerHTML=`<svg viewBox="0 0 ${W} ${Hh+16}" width="100%"><line x1="0" x2="${W}" y1="${mid}" y2="${mid}" stroke="#475569"/>${v.map((x,i)=>{const h=Math.abs(x)/mx*(mid-14);const ok=L[i].ok;
       return `<rect x="${i*bw+3}" y="${x>=0?mid-h:mid}" width="${bw-6}" height="${Math.max(1,h)}" rx="3" fill="${ok?'#22c55e':'#ef4444'}"/><text x="${i*bw+bw/2}" y="${x>=0?mid-h-3:mid+h+11}" font-size="9" fill="#94a3b8" text-anchor="middle">${x}</text>`}).join('')}
       <text x="0" y="${Hh+12}" font-size="9" fill="#94a3b8">${new Date(L[0].ts).toLocaleDateString('pl')}</text><text x="${W}" y="${Hh+12}" font-size="9" fill="#94a3b8" text-anchor="end">${new Date(L[L.length-1].ts).toLocaleDateString('pl')}</text></svg>`}
-  $('histList').innerHTML='<div class="mut">Historia</div>'+(H.slice(-10).reverse().map((h,i)=>`<div class="pitem"><span style="font-size:20px">${h.ok?'✅':'❌'}</span><span class="grow">${new Date(h.ts).toLocaleDateString('pl',{weekday:'short',day:'numeric',month:'short'})}</span><span class="mut">termin ${hhmm(h.deadline)} · koniec ${hhmm(h.finished)}</span><button class="ghost" onclick="delHist(${h.ts})">✕</button></div>`).join('')||'<p class="mut">Pusto</p>');
+  $('histList').innerHTML='<div class="mut">Historia</div>'+(H.slice(-10).reverse().map((h,i)=>`<div class="pitem"><span style="font-size:20px">${h.ok?'✅':'❌'}</span><span class="grow">${new Date(h.ts).toLocaleDateString('pl',{weekday:'short',day:'numeric',month:'short'})}${h.plan?`<div class="mut" style="font-size:12px">${esc(h.plan)}</div>`:''}</span><span class="mut">termin ${hhmm(h.deadline)} · koniec ${hhmm(h.finished)}</span><button class="ghost" onclick="delHist(${h.ts})">✕</button></div>`).join('')||'<p class="mut">Pusto</p>');
   const nc=$('nextCard');
   if(S.run)nc.innerHTML=`<b>🛡️ Pilnowanie w toku</b><div class="mut">${esc(curName())}</div><button class="pri" style="margin-top:8px" onclick="go('guard')">Pokaż</button>`;
-  else if(S.plan.armed)nc.innerHTML=`<div class="mut">Następny budzik</div><div class="big">${hhmm(S.plan.alarmAt)}</div><div class="mut">${new Date(S.plan.alarmAt).toLocaleDateString('pl',{weekday:'long'})} · koniec o ${S.plan.deadline}</div>`;
-  else nc.innerHTML=`<b>Jak zacząć?</b><ol class="mut" style="margin:6px 0 0;padding-left:20px"><li>⏱️ Pomiary – dodaj zadania i zmierz ich czas</li><li>🗓️ Plan – ułóż kolejność i godzinę końca</li><li>⏰ Ustaw budzik – resztą zajmie się 🛡️ Pilnowanie</li></ol>`}
+  else if(S.alarm&&planById(S.alarm.planId))nc.innerHTML=`<div class="mut">Następny budzik</div><div class="big">${hhmm(S.alarm.at)}</div><div class="mut">${new Date(S.alarm.at).toLocaleDateString('pl',{weekday:'long',day:'numeric',month:'long'})} · ${esc(planById(S.alarm.planId).name)} · koniec ${hhmm(S.alarm.deadline)}</div>`;
+  else nc.innerHTML=`<b>Jak zacząć?</b><ol class="mut" style="margin:6px 0 0;padding-left:20px"><li>⏱️ Pomiary – dodaj zadania i zmierz ich czas</li><li>🗓️ Plan – ułóż kolejność, godzinę końca i dni powtarzania</li><li>⏰ Włącz budzik – resztą zajmie się 🛡️ Pilnowanie</li></ol>`}
 function delHist(ts){sheetConfirm('Usunąć wpis z historii?',()=>{S.history=S.history.filter(h=>h.ts!==ts);save();closeSheet();renderHome()})}
 
 /* ========== USTAWIENIA ========== */
@@ -459,10 +515,10 @@ function openSettings(){const s=S.settings;sheet(`<h2>Ustawienia</h2>
   <button class="pri" style="width:100%;margin-top:14px" onclick="saveSettings()">Zapisz</button>${N?'<h2>Budzik</h2><div data-perms></div>':''}`);document.querySelectorAll('#sheetBody [data-perms]').forEach(e=>renderPerms(e))}
 function saveSettings(){Object.assign(S.settings,{estimate:$('sE').value,buffer:+$('sB').value,learn:$('sL').checked,apiKey:$('sK').value.trim()});save();closeSheet();renderTasks();renderPlan()}
 function testSound(){audio();beep3();setTimeout(beepLong,1200);setTimeout(()=>say('Teraz: prysznic. Masz 10 minut.'),3200)}
-function exportData(){const t=JSON.stringify({tasks:S.tasks,history:S.history,plan:S.plan,settings:{...S.settings,apiKey:''}});
+function exportData(){const t=JSON.stringify({tasks:S.tasks,history:S.history,plans:S.plans,settings:{...S.settings,apiKey:''}});
   sheet(`<h2>Kopia danych</h2><textarea id="exp" style="width:100%;height:200px;background:#273449;color:#e2e8f0;border-radius:10px">${esc(t)}</textarea><div class="row" style="margin-top:8px"><button class="pri grow" onclick="if(N){N.copy($('exp').value);toast('Skopiowano');return}navigator.clipboard.writeText($('exp').value).then(()=>toast('Skopiowano'),()=>{$('exp').select();toast('Zaznaczono – skopiuj ręcznie')})">Kopiuj</button><button class="grow" onclick="closeSheet()">Zamknij</button></div>`)}
 function importData(){sheet(`<h2>Przywróć dane</h2><textarea id="imp" placeholder="wklej kopię" style="width:100%;height:200px;background:#273449;color:#e2e8f0;border-radius:10px"></textarea><button class="pri" style="width:100%;margin-top:8px" onclick="doImport()">Przywróć</button>`)}
-function doImport(){try{const d=JSON.parse($('imp').value);['tasks','history','plan'].forEach(k=>{if(d[k])S[k]=d[k]});if(d.settings)Object.assign(S.settings,d.settings,{apiKey:S.settings.apiKey});save();closeSheet();renderAll();toast('Przywrócono')}catch(e){toast('Niepoprawne dane')}}
+function doImport(){try{const d=JSON.parse($('imp').value);['tasks','history','plans'].forEach(k=>{if(d[k])S[k]=d[k]});if(d.settings)Object.assign(S.settings,d.settings,{apiKey:S.settings.apiKey});save();closeSheet();renderAll();toast('Przywrócono')}catch(e){toast('Niepoprawne dane')}}
 
 /* ========== UI ========== */
 function sheet(h){$('sheetBody').innerHTML=h;$('sheet').classList.add('on')}
@@ -477,8 +533,8 @@ function renderAll(){renderTasks();renderPlan();renderGuard();renderHome()}
 /* ========== ZEGAR GŁÓWNY ========== */
 function tick(){const now=Date.now();
   if(S.running){const e=document.querySelector('[data-live]');if(e)e.textContent=fmtDur((now-S.running.start)/1000)}
-  if(S.plan.armed&&!S.run){const a=document.querySelector('[data-alarm]');if(a)a.textContent=fmtDur((S.plan.alarmAt-now)/1000);
-    if(now>=S.plan.alarmAt){if(now-S.plan.alarmAt<3*3600e3)startRun(true);else{S.plan.armed=false;save();renderAll()}}}
+  if(S.alarm&&!S.run){const a=document.querySelector('[data-alarm]');if(a)a.textContent=fmtDur((S.alarm.at-now)/1000);
+    if(now>=S.alarm.at){if(now-S.alarm.at<3*3600e3)startRun(S.alarm.planId,S.alarm.deadline,true);else{const p=planById(S.alarm.planId);if(p&&p.repeat==='once')p.enabled=false;rearm();renderAll()}}}
   const r=S.run;if(r&&!r.asking){const it=r.items[r.idx];const el=(now-r.taskStart)/1000;const left=it.sec-el;
     const g=$('gLeft');if(g){g.textContent=left>=0?fmtDur(left):'-'+fmtDur(-left);g.style.color=left<=30?'var(--warn)':'';
       const arc=$('arc');if(arc){arc.style.strokeDashoffset=678.6*Math.min(1,el/Math.max(1,it.sec));arc.style.stroke=left<=30?'var(--warn)':'var(--acc)'}
@@ -495,8 +551,7 @@ setInterval(tick,250);
 
 /* ========== START ========== */
 renderAll();go(S.run?'guard':'home');
-if(S.plan.armed||S.run)requestWake();
-if(S.plan.armed){$('pAlarmOpts').innerHTML=`<div class="card mut">Budzik ustawiony na ${hhmm(S.plan.alarmAt)}. <button class="ghost" onclick="disarm()">Anuluj</button></div>`}
+if(!S.run)rearm();if(S.alarm||S.run)requestWake();
 if(!N&&'serviceWorker' in navigator&&location.protocol.startsWith('http'))navigator.serviceWorker.register('sw.js').catch(()=>{});
 document.addEventListener('click',()=>audio(),{once:true});
 </script>
