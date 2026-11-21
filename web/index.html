@@ -438,8 +438,13 @@ function ensurePlanEnds(r){if(r.items.every(i=>i.planEnd))return;let t=r.deadlin
   r.items.forEach(i=>{i.orig=i.orig||i.sec;t+=i.orig*1000;i.planEnd=t})}
 function plMin(n){const d=n%10,dd=n%100;return n===1?'minutę':(d>=2&&d<=4&&(dd<12||dd>14))?'minuty':'minut'}
 function lateSpoken(ms){const m=Math.round(ms/60000);return m>=1?`${m} ${plMin(m)}`:`${Math.round(ms/1000)} sekund`}
-function announce(){if(!S.run)return;const it=S.run.items[S.run.idx];
-  say(`${S.run.lateMsg?S.run.lateMsg+' ':''}Teraz: ${curName()}. Masz ${spokenDur(it.sec)}. Koniec według planu o ${hhmm(it.planEnd)}.`)}
+/* Ostateczny zapas (+) / opóźnienie (−) względem terminu planu, w ms */
+function finalSlack(r){const now=Date.now();if(r.asking)return r.deadline-(r.finished||now);const it=r.items[r.idx];
+  const left=Math.max(0,r.taskStart+it.sec*1000-now);const rest=r.items.slice(r.idx+1).reduce((a,x)=>a+x.sec,0)*1000;return r.deadline-(now+left+rest)}
+const slackMin=ms=>Math.round(ms/60000);
+function slackSpoken(r){const m=slackMin(finalSlack(r));const nom=n=>n===1?'minuta':plMin(n);return m>0?`Zapas na koniec: ${m} ${nom(m)}.`:m<0?`Opóźnienie na koniec: ${-m} ${nom(-m)}.`:'Na koniec jesteś dokładnie na czas.'}
+function announce(){if(!S.run)return;const it=S.run.items[S.run.idx];S.run.lastSlack=slackMin(finalSlack(S.run));
+  say(`${S.run.lateMsg?S.run.lateMsg+' ':''}Teraz: ${curName()}. Masz ${spokenDur(it.sec)}. Koniec według planu o ${hhmm(it.planEnd)}. ${slackSpoken(S.run)}`)}
 /* Skracanie bieżącego zadania (dostępne, gdy jesteśmy po czasie względem planu) */
 function shorten(mode){const r=S.run;if(!r||r.asking)return;const it=r.items[r.idx];const el=(Date.now()-r.taskStart)/1000;let left;
   if(mode==='plan')left=(it.planEnd-Date.now())/1000;
@@ -448,12 +453,11 @@ function shorten(mode){const r=S.run;if(!r||r.asking)return;const it=r.items[r.i
   left=Math.max(0,Math.round(left));it.sec=Math.round(el+left);
   r.warned=left<=30;r.half=el>=it.sec/2;save();
   if(left<=0){nextTask(false);return}
-  renderGuard();toast(`Skrócono – zostało ${fmtDur(left)}`);tone(880,.12)}
+  renderGuard();toast(`Skrócono – zostało ${fmtDur(left)}`);tone(880,.12);r.lastSlack=slackMin(finalSlack(r));say(`Skrócono. Zostało ${spokenDur(left)}. ${slackSpoken(r)}`)}
 /* Start z opóźnieniem: zeruje timer bieżącego zadania (pełny czas od teraz) */
 function restartTask(){const r=S.run;if(!r||r.asking)return;ensurePlanEnds(r);const it=r.items[r.idx];
   it.sec=it.orig||it.sec;r.taskStart=Date.now();r.warned=false;r.half=false;r.lateMsg='';save();renderGuard();tone(990,.12);
-  const late=r.taskStart+it.sec*1000-it.planEnd;
-  say(`Start: ${curName()}. Masz ${spokenDur(it.sec)}.`+(late>=30000?` Skończysz ${lateSpoken(late)} po planie.`:''))}
+  r.lastSlack=slackMin(finalSlack(r));say(`Start: ${curName()}. Masz ${spokenDur(it.sec)}. ${slackSpoken(r)}`)}
 function guardDone(){if(!S.run||S.run.asking)return;nextTask(true)}
 function nextTask(manual){const r=S.run;const it=r.items[r.idx];const actual=(Date.now()-r.taskStart)/1000;
   if(manual&&S.settings.learn&&actual>5){const t=S.tasks.find(x=>x.id===it.taskId);if(t)t.samples.push({sec:Math.round(actual),ts:Date.now(),src:'guard'})}
@@ -463,7 +467,7 @@ function nextTask(manual){const r=S.run;const it=r.items[r.idx];const actual=(Da
   if(r.idx>=r.items.length){askFinish();return}
   setTimeout(announce,manual?300:1800);renderGuard()}
 function askFinish(){const r=S.run;r.asking=true;r.finished=Date.now();save();renderGuard();
-  say('Wszystkie zadania zakończone. Czy zdążyłeś?').then(async()=>{if(!S.run||!S.run.asking)return;if(cmdOn)return;const a=await listenOnce('Czy zdążyłeś? Powiedz „tak” lub „nie”');
+  say(`Wszystkie zadania zakończone. ${slackSpoken(r).replace(' na koniec','')} Czy zdążyłeś?`).then(async()=>{if(!S.run||!S.run.asking)return;if(cmdOn)return;const a=await listenOnce('Czy zdążyłeś? Powiedz „tak” lub „nie”');
     if(a&&S.run&&S.run.asking){const t=a.toLowerCase();if(/\btak\b|zdąż/.test(t)&&!/\bnie\b/.test(t))finishRun(true);else if(/\bnie\b/.test(t))finishRun(false)}})}
 function finishRun(ok){const r=S.run;if(!r)return;S.history.push({ts:r.started,deadline:r.deadline,finished:r.finished||Date.now(),ok,n:r.items.length,plan:r.planName||''});S.run=null;save();rearm();if(N)N.keepAwake(false);
   say(ok?'Brawo! Zapisane.':'Zapisane. Następnym razem się uda.');renderGuard();renderHome();renderTasks();setTimeout(()=>go('home'),1500)}
@@ -474,7 +478,7 @@ function renderGuard(){const el=$('guard');const r=S.run;setTimeout(()=>el.query
     el.innerHTML=(ap?`<div class="card" style="text-align:center"><div class="mut">Budzik za</div><div class="big" data-alarm>–</div><div class="mut">${esc(ap.name)} · start ${fmtOcc(a.at)} · koniec ${hhmm(a.deadline)}</div><p class="mut">${N?'Możesz zamknąć aplikację – budzik sam ją otworzy.':'Zostaw aplikację otwartą. Ekran pozostanie włączony.'}</p><button class="ghost" onclick="skipNext()">Pomiń ten budzik</button></div>${N?'<div data-perms></div>':''}`
       :`<div class="card" style="text-align:center"><p>Brak aktywnego budzika.</p><button class="pri" style="width:100%;padding:14px" onclick="go('plan')">🗓️ Do planów</button></div>`)
       +(ready.length?`<div class="card"><div class="mut">Zacznij plan teraz</div>${ready.map(p=>`<div class="pitem"><span class="grow">${esc(p.name)} <span class="mut">${fmtMin(planTotal(p))}</span></span><button onclick="startRun('${p.id}',null,false)">▶</button></div>`).join('')}</div>`:'');return}
-  if(r.asking){el.innerHTML=`<div class="card" style="text-align:center;padding:30px 14px"><div style="font-size:60px">🏁</div><h2>Czy zdążyłeś?</h2><p class="mut">Termin: ${hhmm(r.deadline)} · koniec zadań: ${hhmm(r.finished)}</p>
+  if(r.asking){el.innerHTML=`<div class="card" style="text-align:center;padding:30px 14px"><div style="font-size:60px">🏁</div><h2>Czy zdążyłeś?</h2><p class="mut">Termin: ${hhmm(r.deadline)} · koniec zadań: ${hhmm(r.finished)}</p>${(()=>{const fm=slackMin(r.deadline-r.finished);return `<div style="font-size:30px;font-weight:800;margin:6px 0 14px;color:${fm<0?'var(--bad)':'var(--ok)'}">${fm>0?`Zapas ${fm} min`:fm<0?`Opóźnienie ${-fm} min`:'Dokładnie na czas'}</div>`})()}
     <div class="row"><button class="ok grow" style="padding:18px;font-size:20px" onclick="finishRun(true)">Tak 👍</button><button class="bad grow" style="padding:18px;font-size:20px" onclick="finishRun(false)">Nie 👎</button></div></div>`;return}
   ensurePlanEnds(r);const it=r.items[r.idx];const nx=r.items[r.idx+1];const nt=nx&&S.tasks.find(x=>x.id===nx.taskId);
   el.innerHTML=`${r.lateMsg?`<div class="card" style="background:#7f1d1d;color:#fff;text-align:center;margin-top:0">⚠️ ${esc(r.lateMsg)}</div>`:''}
@@ -487,7 +491,8 @@ function renderGuard(){const el=$('guard');const r=S.run;setTimeout(()=>el.query
     <div class="row" style="margin-top:8px"><span class="mut">Zostało</span><input id="shSet" type="number" min="0" step="0.5" placeholder="min" style="width:90px"><span class="mut">min</span><button class="grow" onclick="shorten('set')">Ustaw</button></div></div>
   <div class="row"><button class="pri" style="flex:1;padding:16px 8px;font-size:18px" onclick="restartTask()">▶ Start<div style="font-size:12px;font-weight:400">zeruj czas</div></button>
   <button class="ok" style="flex:1.4;padding:16px 8px;font-size:18px" onclick="guardDone()">✓ Gotowe<div style="font-size:12px;font-weight:400">następne (opcjonalnie)</div></button></div>
-  <div class="card"><div class="row"><div class="grow"><div class="mut">Następne</div><b>${nt?esc(nt.name):'— koniec —'}</b></div><div style="text-align:right"><div class="mut">Termin</div><b>${hhmm(r.deadline)}</b></div></div><div class="mut" id="gSlack" style="margin-top:6px"></div></div>
+  <div class="card" id="gFinalCard" style="text-align:center;padding:12px"><div class="mut">Na koniec planu (termin ${hhmm(r.deadline)})</div><div id="gFinal" style="font-size:34px;font-weight:800;line-height:1.15;font-variant-numeric:tabular-nums">–</div><div class="mut" id="gFinalSub"></div></div>
+  <div class="card"><div class="row"><div class="grow"><div class="mut">Następne</div><b>${nt?esc(nt.name):'— koniec —'}</b></div>${nx?`<div style="text-align:right"><div class="mut">Czas</div><b>${fmtMin(nx.sec)}</b></div>`:''}</div></div>
   <button class="ghost" style="width:100%" onclick="abortRun()">Przerwij</button>`;tick()}
 
 /* ========== HISTORIA ========== */
@@ -549,7 +554,9 @@ function tick(){const now=Date.now();
       const pe=r.taskStart+it.sec*1000,lateBy=pe-it.planEnd;const gp=$('gProj');
       if(gp)gp.innerHTML=lateBy>=30000?`<span style="color:var(--bad)">Przewidywany koniec ${hhmm(pe)} (+${Math.round(lateBy/60000)} min)</span>`:'';
       const sp=$('shPanel');if(sp){const show=lateBy>=30000&&left>0;if((sp.style.display!=='none')!==show)sp.style.display=show?'block':'none'}
-      const gs=$('gSlack');if(gs)gs.innerHTML=sl>=0?`<span style="color:var(--ok)">Zapas: ${sl} min</span>`:`<span style="color:var(--bad)">Opóźnienie: ${-sl} min</span>`}
+      const gf=$('gFinal');if(gf){const fm=slackMin(finalSlack(r));gf.textContent=fm>0?`Zapas ${fm} min`:fm<0?`Opóźnienie ${-fm} min`:'Dokładnie na czas';
+        gf.style.color=fm>0?'var(--ok)':fm<0?'var(--bad)':'var(--acc)';$('gFinalCard').style.border=`2px solid ${fm<0?'var(--bad)':fm>0?'var(--ok)':'var(--acc)'}`;
+        $('gFinalSub').textContent=`przewidywany koniec ${hhmm(r.deadline-finalSlack(r))}`}}
     if(!r.half&&el>=it.sec/2&&it.sec>=80){r.half=true;save();say('Połowa czasu')}
     if(!r.warned&&left<=30&&it.sec>35){r.warned=true;save();beep3()}
     if(left<=0)nextTask(false)}
