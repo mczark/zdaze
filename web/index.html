@@ -195,11 +195,19 @@ function handleCmd(t){
   if(m=t.match(/^(start|zacznij|rozpocznij|startuj)\s*(.*)$/)){const tk=findTask(m[2])||(m[2]?null:lastTask());if(tk){startTimer(tk.id);say('Start '+tk.name)}else toast('Nie znam zadania: '+m[2]);return}
   if(/^(stop|koniec|zakończ|gotowe|stój)/.test(t)){
     if(S.run){guardDone();return}
-    if(S.running){const tk=S.tasks.find(x=>x.id===S.running.id);const sec=stopTimer();if(tk)say(`${tk.name}: ${spokenDur(sec)}`)}return}
+    if(S.running){const tk=S.tasks.find(x=>x.id===S.running.id);const sec=stopTimer();if(tk)say(`${tk.name}: ${spokenDur(sec,'nom')}`)}return}
   if(S.run&&S.run.asking){if(/\btak\b|zdąż/.test(t)&&!/nie/.test(t))finishRun(true);else if(/\bnie\b/.test(t))finishRun(false)}
 }
 const lastTask=()=>S.tasks.slice().sort((a,b)=>(b.used||0)-(a.used||0))[0];
-function spokenDur(s){s=Math.round(s);const m=Math.floor(s/60),x=s%60;return (m?m+' min ':'')+(x?x+' s':'')||'0 s'}
+/* Odmiana liczebników: forma dla 1 / 2–4 (bez 12–14) / reszty; przypadek: 'nom' (mianownik) lub 'acc' (biernik) */
+const UNITS={h:{nom:['godzina','godziny','godzin'],acc:['godzinę','godziny','godzin']},m:{nom:['minuta','minuty','minut'],acc:['minutę','minuty','minut']},s:{nom:['sekunda','sekundy','sekund'],acc:['sekundę','sekundy','sekund']}};
+function plForm(n,f){const d=n%10,dd=n%100;return n===1?f[0]:(d>=2&&d<=4&&(dd<12||dd>14))?f[1]:f[2]}
+const numUnit=(n,u,cas='acc')=>`${n} ${plForm(n,UNITS[u][cas])}`;
+function spokenDur(sec,cas='acc'){sec=Math.max(0,Math.round(sec));const h=Math.floor(sec/3600),m=Math.floor(sec%3600/60),x=sec%60;
+  const parts=[];if(h)parts.push(numUnit(h,'h',cas));if(m)parts.push(numUnit(m,'m',cas));if(x&&!h)parts.push(numUnit(x,'s',cas));
+  if(!parts.length)return numUnit(0,'s',cas);return parts.length>1?parts.slice(0,-1).join(' ')+' i '+parts.at(-1):parts[0]}
+/* godzina do wymówienia: 7:05 zamiast 07:05 */
+const spTime=ts=>{const d=new Date(ts);return d.getHours()+':'+pad(d.getMinutes())};
 
 /* ========== ZADANIA I POMIARY ========== */
 function addTask(name){const t={id:uid(),type:'activity',name:name.charAt(0).toUpperCase()+name.slice(1),samples:[],maps:null,used:Date.now()};S.tasks.unshift(t);save();renderTasks();renderPlan();return t}
@@ -359,7 +367,7 @@ async function togglePlan(id,on){const p=planById(id);if(on&&p.repeat==='none'){
 async function enablePlan(id){const p=planById(id);p.enabled=true;p.skip=[];save();audio();rearm();
   if(!N)try{if('Notification' in window&&Notification.permission==='default')await Notification.requestPermission()}catch(e){}
   if(!permsOk())toast('Uwaga: brakuje uprawnień – budzik może nie otworzyć aplikacji sam. Zobacz listę w planie.',6000);
-  renderAll();const o=planNext(p,Date.now());say(`Plan ${p.name} włączony. Najbliższy start ${fmtOcc(o.start).split(' ').pop()}.`)}
+  renderAll();const o=planNext(p,Date.now());say(`Plan ${p.name} włączony. Najbliższy start o ${spTime(o.start)}.`)}
 function skipNext(){const a=S.alarm;if(!a)return;const p=planById(a.planId);
   if(p.repeat==='once')p.enabled=false;else{p.skip=(p.skip||[]).filter(t=>t>Date.now()-864e5);p.skip.push(a.deadline)}
   save();rearm();renderAll();toast('Pominięto najbliższy budzik')}
@@ -436,15 +444,15 @@ const curName=()=>{const it=S.run&&S.run.items[S.run.idx];const t=it&&S.tasks.fi
 /* Oryginalne (z planu) godziny końca każdego zadania – liczone wstecz od terminu, niezmienne w trakcie */
 function ensurePlanEnds(r){if(r.items.every(i=>i.planEnd))return;let t=r.deadline-r.items.reduce((a,i)=>a+(i.orig||i.sec),0)*1000;
   r.items.forEach(i=>{i.orig=i.orig||i.sec;t+=i.orig*1000;i.planEnd=t})}
-function plMin(n){const d=n%10,dd=n%100;return n===1?'minutę':(d>=2&&d<=4&&(dd<12||dd>14))?'minuty':'minut'}
-function lateSpoken(ms){const m=Math.round(ms/60000);return m>=1?`${m} ${plMin(m)}`:`${Math.round(ms/1000)} sekund`}
+function plMin(n){return plForm(n,UNITS.m.acc)}
+function lateSpoken(ms){return ms>=60000?spokenDur(Math.round(ms/60000)*60,'acc'):spokenDur(ms/1000,'acc')}
 /* Ostateczny zapas (+) / opóźnienie (−) względem terminu planu, w ms */
 function finalSlack(r){const now=Date.now();if(r.asking)return r.deadline-(r.finished||now);const it=r.items[r.idx];
   const left=Math.max(0,r.taskStart+it.sec*1000-now);const rest=r.items.slice(r.idx+1).reduce((a,x)=>a+x.sec,0)*1000;return r.deadline-(now+left+rest)}
 const slackMin=ms=>Math.round(ms/60000);
-function slackSpoken(r){const m=slackMin(finalSlack(r));const nom=n=>n===1?'minuta':plMin(n);return m>0?`Zapas na koniec: ${m} ${nom(m)}.`:m<0?`Opóźnienie na koniec: ${-m} ${nom(-m)}.`:'Na koniec jesteś dokładnie na czas.'}
+function slackSpoken(r){const m=slackMin(finalSlack(r));return m>0?`Zapas na koniec: ${numUnit(m,'m','nom')}.`:m<0?`Opóźnienie na koniec: ${numUnit(-m,'m','nom')}.`:'Na koniec jesteś dokładnie na czas.'}
 function announce(){if(!S.run)return;const it=S.run.items[S.run.idx];S.run.lastSlack=slackMin(finalSlack(S.run));
-  say(`${S.run.lateMsg?S.run.lateMsg+' ':''}Teraz: ${curName()}. Masz ${spokenDur(it.sec)}. Koniec według planu o ${hhmm(it.planEnd)}. ${slackSpoken(S.run)}`)}
+  say(`${S.run.lateMsg?S.run.lateMsg+' ':''}Teraz: ${curName()}. Masz ${spokenDur(it.sec)}. Koniec według planu o ${spTime(it.planEnd)}. ${slackSpoken(S.run)}`)}
 /* Skracanie bieżącego zadania (dostępne, gdy jesteśmy po czasie względem planu) */
 function shorten(mode){const r=S.run;if(!r||r.asking)return;const it=r.items[r.idx];const el=(Date.now()-r.taskStart)/1000;let left;
   if(mode==='plan')left=(it.planEnd-Date.now())/1000;
@@ -453,7 +461,7 @@ function shorten(mode){const r=S.run;if(!r||r.asking)return;const it=r.items[r.i
   left=Math.max(0,Math.round(left));it.sec=Math.round(el+left);
   r.warned=left<=30;r.half=el>=it.sec/2;save();
   if(left<=0){nextTask(false);return}
-  renderGuard();toast(`Skrócono – zostało ${fmtDur(left)}`);tone(880,.12);r.lastSlack=slackMin(finalSlack(r));say(`Skrócono. Zostało ${spokenDur(left)}. ${slackSpoken(r)}`)}
+  renderGuard();toast(`Skrócono – zostało ${fmtDur(left)}`);tone(880,.12);r.lastSlack=slackMin(finalSlack(r));say(`Skrócono. Do końca zadania: ${spokenDur(left,'nom')}. ${slackSpoken(r)}`)}
 /* Start z opóźnieniem: zeruje timer bieżącego zadania (pełny czas od teraz) */
 function restartTask(){const r=S.run;if(!r||r.asking)return;ensurePlanEnds(r);const it=r.items[r.idx];
   it.sec=it.orig||it.sec;r.taskStart=Date.now();r.warned=false;r.half=false;r.lateMsg='';save();renderGuard();tone(990,.12);
