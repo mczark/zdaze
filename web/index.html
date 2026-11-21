@@ -312,13 +312,13 @@ function atTime(day,hm){const [h,m]=hm.split(':').map(Number);const d=new Date(d
 function schedule(p,deadline){let t=deadline-planTotal(p)*1000;return p.items.map(i=>{const s=t;t+=i.sec*1000;return{...i,start:s,end:t}})}
 function defaultDate(p){const d=new Date();if(atTime(d,p.deadline)-planTotal(p)*1000<Date.now())d.setDate(d.getDate()+1);return ymd(d)}
 /* wystąpienia planu w oknie [from,to]: {deadline,start} */
-function occurrences(p,from,to){const tot=planTotal(p)*1000,out=[];
+function occurrences(p,from,to){const tot=planTotal(p)*1000,out=[];if(p.repeat==='none')return out;
   if(p.repeat==='weekly'){const d=new Date(from-864e5);d.setHours(0,0,0,0);
     while(d.getTime()<=to+864e5){if((p.days||[]).includes(d.getDay())){const dl=atTime(d,p.deadline);if(dl>=from&&dl-tot<=to)out.push({deadline:dl,start:dl-tot})}d.setDate(d.getDate()+1)}}
   else{const [y,mo,da]=(p.date||defaultDate(p)).split('-').map(Number);const dl=atTime(new Date(y,mo-1,da),p.deadline);if(dl>=from&&dl-tot<=to)out.push({deadline:dl,start:dl-tot})}
   return out.filter(o=>!(p.skip||[]).includes(o.deadline))}
 function planNext(p,after){return occurrences(p,after,after+15*864e5).filter(o=>o.start>after).sort((a,b)=>a.start-b.start)[0]||null}
-function repeatText(p){if(p.repeat==='weekly'){const d=p.days||[];if(d.length===7)return'codziennie';if(d.length===5&&[1,2,3,4,5].every(x=>d.includes(x)))return'dni robocze';return d.length?DORDER.filter(x=>d.includes(x)).map(x=>DSH[x]).join(' '):'brak dni'}
+function repeatText(p){if(p.repeat==='none')return '📋 profil (bez harmonogramu)';if(p.repeat==='weekly'){const d=p.days||[];if(d.length===7)return'codziennie';if(d.length===5&&[1,2,3,4,5].every(x=>d.includes(x)))return'dni robocze';return d.length?DORDER.filter(x=>d.includes(x)).map(x=>DSH[x]).join(' '):'brak dni'}
   return 'jednorazowo '+new Date((p.date||defaultDate(p))+'T12:00').toLocaleDateString('pl',{weekday:'short',day:'numeric',month:'numeric'})}
 const fmtOcc=ts=>new Date(ts).toLocaleDateString('pl',{weekday:'short',day:'numeric',month:'numeric'})+' '+hhmm(ts);
 /* kolizje: przedziały [start, koniec] wystąpień nakładają się w ciągu najbliższych 14 dni */
@@ -336,16 +336,19 @@ function rearm(){const now=Date.now();let best=null;
   const prev=S.alarm;S.alarm=best;save();
   if(N){if(best&&(!prev||prev.at!==best.at||prev.planId!==best.planId))N.setAlarm(best.at,'Zdążę! – '+planById(best.planId).name);else if(!best&&prev)N.cancelAlarm()}
   if(best&&!S.run)requestWake()}
-function newPlan(){const p={id:uid(),name:'Plan '+(S.plans.length+1),deadline:'07:45',items:[],repeat:'weekly',days:[1,2,3,4,5],date:'',enabled:false,skip:[]};S.plans.push(p);save();openPlan(p.id)}
+function newPlan(kind){const p={id:uid(),name:kind==='none'?'Profil '+(S.plans.filter(x=>x.repeat==='none').length+1):'Plan '+(S.plans.length+1),deadline:'07:45',items:[],repeat:kind==='none'?'none':'weekly',days:[1,2,3,4,5],date:'',enabled:false,skip:[]};S.plans.push(p);save();openPlan(p.id)}
 function openPlan(id){editPlanId=id;renderPlan();window.scrollTo(0,0)}
 function closePlan(){editPlanId=null;renderPlan()}
 function dupPlan(){const p=EP();const q=JSON.parse(JSON.stringify(p));q.id=uid();q.name=p.name+' (kopia)';q.enabled=false;q.skip=[];S.plans.push(q);save();openPlan(q.id);toast('Utworzono kopię')}
+function planFromProfile(id){const src=planById(id||editPlanId);
+  const q={id:uid(),name:src.name,deadline:src.deadline||'07:45',items:JSON.parse(JSON.stringify(src.items)),repeat:'weekly',days:[1,2,3,4,5],date:'',enabled:false,skip:[],fromProfile:src.id};
+  S.plans.push(q);save();openPlan(q.id);toast('Skopiowano zadania z profilu – ustaw harmonogram i włącz budzik',4500)}
 function delPlan(){const p=EP();sheetConfirm(`Usunąć plan „${p.name}”?`,()=>{S.plans=S.plans.filter(x=>x.id!==p.id);editPlanId=null;closeSheet();rearm();renderAll()})}
 function planField(k,v){const p=EP();p[k]=v;if(k==='deadline'&&p.repeat==='once')p.date=p.date||'';p.skip=[];save();rearm();renderPlan()}
-function setRepeat(r){const p=EP();p.repeat=r;if(r==='once'&&!p.date)p.date=defaultDate(p);if(r==='weekly'&&!(p.days||[]).length)p.days=[1,2,3,4,5];save();rearm();renderPlan()}
+function setRepeat(r){const p=EP();p.repeat=r;if(r==='none')p.enabled=false;if(r==='once'&&!p.date)p.date=defaultDate(p);if(r==='weekly'&&!(p.days||[]).length)p.days=[1,2,3,4,5];save();rearm();renderPlan()}
 function toggleDay(d){const p=EP();p.days=p.days||[];p.days.includes(d)?p.days=p.days.filter(x=>x!==d):p.days.push(d);save();rearm();renderPlan()}
 function setDays(a){EP().days=a;save();rearm();renderPlan()}
-async function togglePlan(id,on){const p=planById(id);if(on){
+async function togglePlan(id,on){const p=planById(id);if(on&&p.repeat==='none'){toast('Profil nie ma harmonogramu – utwórz z niego plan');renderPlan();return}if(on){
     if(!p.items.length){toast('Dodaj najpierw zadania do planu');renderPlan();return}
     if(!planNext(p,Date.now())){toast(p.repeat==='weekly'?'Wybierz dni tygodnia':'Godzina startu już minęła – zmień datę');renderPlan();return}
     const cf=conflicts(p);
@@ -369,27 +372,30 @@ function planRefresh(i){const it=EP().items[i];const t=S.tasks.find(x=>x.id===it
 function renderPlan(keep){const el=$('planView');const p=EP();if(!p){editPlanId=null;renderPlanList(el);renderHome();return}
   const now=Date.now(),o=planNext(p,now),dl=o?o.deadline:occurrences(p,0,now+30*864e5).map(x=>x.deadline).pop()||atTime(new Date(),p.deadline);
   const sch=schedule(p,dl),cf=conflicts(p),st=sch.length?sch[0].start:dl;
-  if(keep){sch.forEach((it,i)=>{const e=document.querySelector(`[data-st="${i}"]`);if(e)e.textContent=hhmm(it.start)});const s=$('pSummary');if(s)s.innerHTML=summaryHtml();renderHome();return}
-  function summaryHtml(){return `<div class="row"><div class="stat"><b>${hhmm(st)}</b><span class="mut">start / budzik</span></div><div class="stat"><b>${fmtMin(planTotal(p))}</b><span class="mut">łącznie</span></div><div class="stat"><b>${p.deadline}</b><span class="mut">koniec</span></div></div>
+  if(keep){if(p.repeat!=='none')sch.forEach((it,i)=>{const e=document.querySelector(`[data-st="${i}"]`);if(e)e.textContent=hhmm(it.start)});const s=$('pSummary');if(s)s.innerHTML=summaryHtml();renderHome();return}
+  function summaryHtml(){if(p.repeat==='none')return `<div class="row"><div class="stat"><b>${p.items.length}</b><span class="mut">zadań</span></div><div class="stat"><b>${fmtMin(planTotal(p))}</b><span class="mut">łącznie</span></div></div>`;
+    return `<div class="row"><div class="stat"><b>${hhmm(st)}</b><span class="mut">start / budzik</span></div><div class="stat"><b>${fmtMin(planTotal(p))}</b><span class="mut">łącznie</span></div><div class="stat"><b>${p.deadline}</b><span class="mut">koniec</span></div></div>
     <p class="mut" style="text-align:center;margin:8px 0 0">${o?`Najbliższe uruchomienie: <b>${fmtOcc(o.start)}</b>`:(p.items.length?'<span style="color:var(--bad)">Brak przyszłego uruchomienia – zmień datę lub dni.</span>':'')}</p>`}
   el.innerHTML=`<button class="ghost" onclick="closePlan()" style="padding-left:0">‹ Wszystkie plany</button>
   <div class="card"><label>Nazwa planu</label><input value="${esc(p.name)}" onchange="planField('name',this.value.trim()||'Plan')">
-    <div class="row"><div class="grow"><label>Muszę skończyć o</label><input type="time" value="${p.deadline}" onchange="planField('deadline',this.value)"></div></div>
-    <label>Powtarzanie</label>
-    <div class="row seg"><button class="grow ${p.repeat!=='weekly'?'on':''}" onclick="setRepeat('once')">Jednorazowo</button><button class="grow ${p.repeat==='weekly'?'on':''}" onclick="setRepeat('weekly')">🔁 Cyklicznie</button></div>
-    ${p.repeat==='weekly'?`<div class="days7">${DORDER.map(d=>`<button class="${(p.days||[]).includes(d)?'on':''}" onclick="toggleDay(${d})">${DSH[d]}</button>`).join('')}</div>
+    <label>Harmonogram</label>
+    <div class="row seg" style="font-size:14px"><button class="grow ${p.repeat==='none'?'on':''}" onclick="setRepeat('none')">📋 Brak</button><button class="grow ${p.repeat==='once'?'on':''}" onclick="setRepeat('once')">Jednorazowo</button><button class="grow ${p.repeat==='weekly'?'on':''}" onclick="setRepeat('weekly')">🔁 Cyklicznie</button></div>
+    ${p.repeat!=='none'?`<div class="row"><div class="grow"><label>Muszę skończyć o</label><input type="time" value="${p.deadline}" onchange="planField('deadline',this.value)"></div></div>`:''}
+    ${p.repeat==='none'?`<p class="mut" style="margin:10px 0 0">Profil to zestaw zadań bez harmonogramu i bez budzika. Utwórz z niego plan – zadania zostaną skopiowane, a Ty ustawisz godzinę i dni.</p>`
+    :p.repeat==='weekly'?`<div class="days7">${DORDER.map(d=>`<button class="${(p.days||[]).includes(d)?'on':''}" onclick="toggleDay(${d})">${DSH[d]}</button>`).join('')}</div>
       <div class="row" style="margin-top:6px;gap:4px;font-size:14px;white-space:nowrap"><button class="ghost grow" onclick="setDays([1,2,3,4,5])">Dni robocze</button><button class="ghost grow" onclick="setDays([0,6])">Weekend</button><button class="ghost grow" onclick="setDays([0,1,2,3,4,5,6])">Codziennie</button></div>`
     :`<label>Dnia</label><input type="date" value="${p.date||defaultDate(p)}" onchange="planField('date',this.value)">`}
   </div>
   ${cf.length?`<div class="card" style="border:1px solid var(--bad)"><b>⚠️ Kolizja z innymi planami</b>${cf.map(c=>`<p class="mut" style="margin:6px 0 0">• ${conflictText(c)}</p>`).join('')}<p class="mut" style="font-size:12px">Wcześniejszy plan ma pierwszeństwo – drugi zostanie pominięty, jeśli w jego godzinie startu pierwszy będzie jeszcze trwał.</p></div>`:''}
-  <div class="card"><div id="pItems">${sch.length?sch.map((it,i)=>{const t=S.tasks.find(x=>x.id===it.taskId);return `<div class="pitem"><span class="time" data-st="${i}">${hhmm(it.start)}</span><span class="pname">${t&&t.type==='travel'?'🚗 ':''}${esc(t?t.name:'?')}</span>
+  <div class="card"><div id="pItems">${sch.length?sch.map((it,i)=>{const t=S.tasks.find(x=>x.id===it.taskId);return `<div class="pitem"><span class="time" data-st="${i}">${p.repeat==='none'?(i+1)+'.':hhmm(it.start)}</span><span class="pname">${t&&t.type==='travel'?'🚗 ':''}${esc(t?t.name:'?')}</span>
     <input type="number" min="0" step="0.5" value="${+(it.sec/60).toFixed(1)}" onchange="planSet(${i},this.value)" title="minuty"><span class="mut">min</span>
     <button class="ghost" onclick="planRefresh(${i})" title="Weź szacunek z pomiarów">↻</button><button class="ghost" onclick="planMove(${i},-1)">▲</button><button class="ghost" onclick="planMove(${i},1)">▼</button><button class="ghost" onclick="planDel(${i})">✕</button></div>`}).join('')
     :'<p class="mut">Dodaj zadania w kolejności wykonywania. Czasy wezmą się z pomiarów (możesz je zmienić).</p>'}</div>
     <div class="row" style="margin-top:10px"><select id="pAdd" class="grow">${S.tasks.length?S.tasks.map(t=>`<option value="${t.id}">${t.type==='travel'?'🚗 ':''}${esc(t.name)} (${t.samples.length?fmtMin(estimate(t)):'?'})</option>`).join(''):'<option value="">— najpierw dodaj zadania w Pomiarach —</option>'}</select><button onclick="planAdd()">Dodaj</button></div></div>
   <div class="card" id="pSummary">${summaryHtml()}</div>
-  <button class="${p.enabled?'ok':'pri'}" style="width:100%;padding:16px" onclick="togglePlan('${p.id}',${!p.enabled})">${p.enabled?'✅ Budzik włączony – dotknij, aby wyłączyć':'⏰ Włącz budzik'}</button>
-  ${p.enabled&&o?alarmExtras(o.start,o.deadline,p):''}
+  ${p.repeat==='none'?`<button class="pri" style="width:100%;padding:16px" onclick="planFromProfile('${p.id}')" ${p.items.length?'':'disabled'}>📋 Utwórz plan z tego profilu</button>`
+  :`<button class="${p.enabled?'ok':'pri'}" style="width:100%;padding:16px" onclick="togglePlan('${p.id}',${!p.enabled})">${p.enabled?'✅ Budzik włączony – dotknij, aby wyłączyć':'⏰ Włącz budzik'}</button>
+  ${p.enabled&&o?alarmExtras(o.start,o.deadline,p):''}`}
   <div class="row" style="margin-top:10px"><button class="grow" onclick="startRun('${p.id}',null,false)" ${p.items.length?'':'disabled'}>▶ Zacznij teraz</button><button class="grow" onclick="dupPlan()">Duplikuj</button><button class="bad grow" onclick="delPlan()">Usuń</button></div>`;
   el.querySelectorAll('[data-perms]').forEach(e=>renderPerms(e));renderHome()}
 function alarmExtras(at,deadline,p){const d=new Date(at);
@@ -401,13 +407,14 @@ function alarmExtras(at,deadline,p){const d=new Date(at);
    <button style="width:100%;margin:4px 0" onclick="downloadIcs('${p.id}',${deadline})">📅 Przypomnienie w kalendarzu (.ics)</button></div>`}
 function renderPlanList(el){const now=Date.now();const a=S.alarm,ap=a&&planById(a.planId);
   el.innerHTML=`${ap?`<div class="card" style="text-align:center"><div class="mut">Najbliższy budzik</div><div class="big">${hhmm(a.at)}</div><div class="mut">${new Date(a.at).toLocaleDateString('pl',{weekday:'long',day:'numeric',month:'long'})} · ${esc(ap.name)}</div><button class="ghost" onclick="skipNext()">Pomiń ten budzik</button></div>`:''}
-  ${S.plans.map(p=>{const o=planNext(p,now),cf=p.enabled?conflicts(p):[];const tot=planTotal(p);
+  ${S.plans.slice().sort((a,b)=>(a.repeat==='none')-(b.repeat==='none')).map(p=>{const o=planNext(p,now),cf=p.enabled?conflicts(p):[];const tot=planTotal(p);
     return `<div class="card" onclick="openPlan('${p.id}')"><div class="row"><div class="grow"><div style="font-weight:600;font-size:17px">${esc(p.name)}</div>
-      <div class="mut">${p.repeat==='weekly'?'🔁 ':''}${repeatText(p)} · koniec ${p.deadline} · ${p.items.length} zadań, ${fmtMin(tot)}</div>
-      <div class="mut" style="font-size:13px">${p.enabled?(o?`⏰ następny start: ${fmtOcc(o.start)}`:'brak przyszłego uruchomienia'):'budzik wyłączony'}</div>
+      <div class="mut">${p.repeat==='weekly'?'🔁 ':''}${repeatText(p)}${p.repeat==='none'?'':' · koniec '+p.deadline} · ${p.items.length} zadań, ${fmtMin(tot)}</div>
+      ${p.repeat==='none'?'':`<div class="mut" style="font-size:13px">${p.enabled?(o?`⏰ następny start: ${fmtOcc(o.start)}`:'brak przyszłego uruchomienia'):'budzik wyłączony'}</div>`}
       ${cf.length?`<div style="color:var(--bad);font-size:13px">⚠️ kolizja z: ${[...new Set(cf.map(c=>c.q.name))].map(esc).join(', ')}</div>`:''}</div>
-      <label class="sw" onclick="event.stopPropagation()"><input type="checkbox" ${p.enabled?'checked':''} onchange="togglePlan('${p.id}',this.checked)"><span></span></label></div></div>`}).join('')||'<div class="card mut" style="text-align:center">Brak planów. Utwórz pierwszy – np. „Do pracy” w dni robocze.</div>'}
-  <button class="pri" style="width:100%;padding:14px" onclick="newPlan()">＋ Nowy plan</button>`}
+      ${p.repeat==='none'?`<button onclick="event.stopPropagation();planFromProfile('${p.id}')" ${p.items.length?'':'disabled'} style="white-space:nowrap">＋ Plan</button>`
+      :`<label class="sw" onclick="event.stopPropagation()"><input type="checkbox" ${p.enabled?'checked':''} onchange="togglePlan('${p.id}',this.checked)"><span></span></label>`}</div></div>`}).join('')||'<div class="card mut" style="text-align:center">Brak planów. Utwórz pierwszy – np. „Do pracy” w dni robocze.</div>'}
+  <div class="row"><button class="pri grow" style="padding:14px" onclick="newPlan()">＋ Nowy plan</button><button class="grow" style="padding:14px" onclick="newPlan('none')">📋 Nowy profil</button></div>`}
 function downloadIcs(pid,deadline){const p=planById(pid);const sch=schedule(p,deadline);const f=ts=>new Date(ts).toISOString().replace(/[-:]/g,'').replace(/\.\d+/,'');
   const ev=sch.map((it,i)=>{const t=S.tasks.find(x=>x.id===it.taskId);return `BEGIN:VEVENT\r\nUID:${uid()}@zdaze\r\nDTSTAMP:${f(Date.now())}\r\nDTSTART:${f(it.start)}\r\nDTEND:${f(it.end)}\r\nSUMMARY:${(t?t.name:'Zadanie').replace(/[,;]/g,' ')}\r\n${i===0?'BEGIN:VALARM\r\nACTION:AUDIO\r\nTRIGGER:PT0M\r\nEND:VALARM\r\nBEGIN:VALARM\r\nACTION:DISPLAY\r\nDESCRIPTION:Zdążę! Start\r\nTRIGGER:PT0M\r\nEND:VALARM\r\n':''}END:VEVENT`}).join('\r\n');
   const b=new Blob([`BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Zdaze//PL\r\n${ev}\r\nEND:VCALENDAR`],{type:'text/calendar'});const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='zdaze-plan.ics';a.click()}
