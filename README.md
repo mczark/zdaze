@@ -25,7 +25,10 @@ Ten klucz jest publiczny, więc wystarcza do użytku prywatnego. Własny klucz u
 
 - **Mikrofon**: do nazywania zadań i komend głosowych.
 - **Powiadomienia**: potrzebne do budzika.
-- **Powiadomienia pełnoekranowe** (Android 14+): aplikacja otworzy ustawienia przy pierwszym ustawieniu budzika. Włącz je, żeby budzik pokazywał aplikację na zablokowanym ekranie.
+- **Wyświetlanie nad innymi aplikacjami**: bez tego Android nie pozwoli budzikowi samemu otworzyć aplikacji.
+- **Powiadomienia pełnoekranowe** (Android 14+): aplikacja na zablokowanym ekranie.
+- **Bez ograniczeń baterii** (oraz „Autostart” na Xiaomi/Huawei/Oppo itp.).
+- Lista z przyciskami „Napraw” i **Test budzika (za 15 s)** jest w ⚙️ Ustawieniach i po ustawieniu budzika.
 - Rozpoznawanie mowy korzysta z usługi Google na telefonie. Dla trybu offline pobierz pakiet języka polskiego w ustawieniach rozpoznawania mowy.
 
 ## Google Maps

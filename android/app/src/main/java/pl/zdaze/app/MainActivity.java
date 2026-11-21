@@ -12,6 +12,8 @@ import android.media.AudioManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.PowerManager;
+import android.app.AlarmManager;
 import android.provider.AlarmClock;
 import android.provider.Settings;
 import android.speech.RecognitionListener;
@@ -110,15 +112,57 @@ public class MainActivity extends Activity {
         if (!p.isEmpty()) requestPermissions(p.toArray(new String[0]), 1);
     }
 
-    private void ensureFullScreenPermission() {
-        if (Build.VERSION.SDK_INT >= 34) {
+    /** Stan uprawnień potrzebnych, by budzik sam uruchomił aplikację. */
+    String permJson() {
+        try {
+            JSONObject o = new JSONObject();
             NotificationManager nm = getSystemService(NotificationManager.class);
-            if (!nm.canUseFullScreenIntent()) {
-                try {
-                    startActivity(new Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT, Uri.parse("package:" + getPackageName())));
-                } catch (Exception ignored) {}
-            }
+            o.put("notif", nm.areNotificationsEnabled());
+            o.put("fullscreen", Build.VERSION.SDK_INT < 34 || nm.canUseFullScreenIntent());
+            o.put("overlay", Settings.canDrawOverlays(this));
+            o.put("battery", getSystemService(PowerManager.class).isIgnoringBatteryOptimizations(getPackageName()));
+            o.put("exact", Build.VERSION.SDK_INT < 31 || getSystemService(AlarmManager.class).canScheduleExactAlarms());
+            o.put("sdk", Build.VERSION.SDK_INT);
+            o.put("maker", Build.MANUFACTURER);
+            return o.toString();
+        } catch (Exception e) { return "{}"; }
+    }
+
+    void openPerm(String which) {
+        Uri pkg = Uri.parse("package:" + getPackageName());
+        Intent i = null;
+        switch (which) {
+            case "notif":
+                if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+                        && shouldShowRequestPermissionRationale(Manifest.permission.POST_NOTIFICATIONS) ) {
+                    requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 2); return;
+                }
+                i = new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, getPackageName());
+                break;
+            case "fullscreen":
+                if (Build.VERSION.SDK_INT >= 34) i = new Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT, pkg);
+                break;
+            case "overlay":
+                i = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, pkg);
+                break;
+            case "battery":
+                i = new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, pkg);
+                break;
+            case "exact":
+                if (Build.VERSION.SDK_INT >= 31) i = new Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM, pkg);
+                break;
         }
+        if (i == null) return;
+        try { startActivity(i); }
+        catch (Exception e) {
+            try { startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, pkg)); } catch (Exception ignored) {}
+        }
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        if (pageLoaded) js("window.__resume&&window.__resume()");
     }
 
     @Override
@@ -205,8 +249,16 @@ public class MainActivity extends Activity {
         @JavascriptInterface
         public void setAlarm(double ts, String label) {
             AlarmReceiver.schedule(MainActivity.this, (long) ts, label);
-            runOnUiThread(MainActivity.this::ensureFullScreenPermission);
         }
+
+        @JavascriptInterface
+        public String permStatus() { return permJson(); }
+
+        @JavascriptInterface
+        public void openPermission(String which) { runOnUiThread(() -> openPerm(which)); }
+
+        @JavascriptInterface
+        public void testAlarm() { AlarmReceiver.scheduleTest(MainActivity.this, System.currentTimeMillis() + 15000); }
 
         @JavascriptInterface
         public void cancelAlarm() { AlarmReceiver.cancel(MainActivity.this); }

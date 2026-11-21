@@ -133,7 +133,18 @@ window.__ttsDone=id=>{const f=nCb.tts[id];delete nCb.tts[id];f&&f()};
 window.__srPartial=t=>{nCb.rec&&nCb.rec.onresult&&nCb.rec.onresult(t,false)};
 window.__srFinal=t=>{nCb.rec&&nCb.rec.onresult&&nCb.rec.onresult(t,true)};
 window.__srEnd=err=>{const r=nCb.rec;nCb.rec=null;if(r){if(err&&r.onerror)r.onerror({error:err});r.onend&&r.onend()}};
-window.__nativeAlarm=()=>{if(S.plan.armed&&!S.run)startRun(true)};
+window.__nativeAlarm=()=>{if(S.plan.armed&&!S.run)startRun(true);else if(!S.run){toast('⏰ Budzik sam otworzył aplikację – działa!',5000);say('Test budzika udany.')}};
+window.__resume=()=>{document.querySelectorAll('[data-perms]').forEach(e=>renderPerms(e));tick()};
+/* Uprawnienia potrzebne, by budzik sam otwierał aplikację (tylko Android) */
+const PERMS=[['notif','Powiadomienia','dzwonek i powiadomienie budzika'],['overlay','Wyświetlanie nad innymi aplikacjami','pozwala budzikowi samemu otworzyć aplikację'],
+  ['fullscreen','Powiadomienia pełnoekranowe','pokazuje aplikację na zablokowanym ekranie'],['battery','Bez ograniczeń baterii','system nie uśpi budzika'],['exact','Dokładne alarmy','budzik co do minuty']];
+function permState(){try{return JSON.parse(N.permStatus())}catch(e){return{}}}
+function permsOk(){if(!N)return true;const p=permState();return PERMS.every(([k])=>p[k]!==false)}
+function renderPerms(el){if(!N){el.innerHTML='';return}const p=permState();const bad=PERMS.filter(([k])=>p[k]===false);
+  el.innerHTML=`<div class="card" style="${bad.length?'border:1px solid var(--bad)':''}"><b>${bad.length?'⚠️ Budzik nie otworzy aplikacji sam – brakuje uprawnień':'✅ Budzik może sam uruchomić aplikację'}</b>
+  ${PERMS.map(([k,n,d])=>`<div class="pitem"><span style="font-size:20px">${p[k]===false?'❌':'✅'}</span><span class="grow">${n}<div class="mut" style="font-size:12px">${d}</div></span>${p[k]===false?`<button class="pri" onclick="N.openPermission('${k}')">Napraw</button>`:''}</div>`).join('')}
+  ${/xiaomi|redmi|poco|huawei|honor|oppo|vivo|realme|oneplus/i.test(p.maker||'')?`<p class="mut" style="font-size:12px">Telefon ${esc(p.maker)}: włącz też „Autostart” / „Uruchamianie w tle” dla Zdążę! w ustawieniach aplikacji.</p>`:''}
+  <button style="width:100%;margin-top:8px" onclick="N.testAlarm();toast('Zablokuj telefon – za 15 s budzik powinien sam otworzyć aplikację',6000)">🔔 Test budzika (za 15 s)</button></div>`}
 /* uniwersalny rozpoznawacz: {continuous,interim,onresult(text,final),onerror,onend} */
 function makeRec(o){
   if(N){return{start(){if(nCb.rec){const p=nCb.rec;nCb.rec=null;p.onend&&p.onend()}nCb.rec=o;N.listen(S.settings.lang,!!o.interim)},abort(){if(nCb.rec===o){N.stopListening()}}}}
@@ -331,11 +342,14 @@ async function armPlan(){
   const d=new Date(at);
   $('pAlarmOpts').innerHTML=`<div class="card"><b>Budzik w aplikacji ustawiony na ${hhmm(at)}.</b>
    ${N?`<p class="mut">Aplikacja uruchomi się sama o tej godzinie – nawet gdy telefon jest zablokowany. Możesz dodatkowo ustawić budzik w zegarze:</p>
+   <div data-perms></div>
    <button style="width:100%;margin:4px 0" onclick="N.systemAlarmAt(${at},'Zdążę! – start ${d.toLocaleDateString('pl',{weekday:'long',day:'numeric',month:'numeric'})}')">⏰ Dodaj też do aplikacji Zegar (${d.toLocaleDateString('pl',{weekday:'long'})} ${hhmm(at)})</button>
    ${at-Date.now()>864e5?`<p class="mut" style="font-size:13px">⚠️ Zegar nie przyjmuje daty, tylko dzień tygodnia – utworzy budzik <b>powtarzany co ${d.toLocaleDateString('pl',{weekday:'long'})}</b>. Wyłącz go po użyciu albo dodaj go dopiero w przeddzień (w ciągu 24 h przed budzikiem będzie jednorazowy).</p>`:''}`:`<p class="mut">Zostaw aplikację otwartą (ekran nie zgaśnie, telefon najlepiej na ładowarce). Dla pewności dodaj też budzik systemowy:</p>
    <a href="intent:#Intent;action=android.intent.action.SET_ALARM;i.android.intent.extra.alarm.HOUR=${d.getHours()};i.android.intent.extra.alarm.MINUTES=${d.getMinutes()};S.android.intent.extra.alarm.MESSAGE=${encodeURIComponent('Zdążę! – start')};B.android.intent.extra.alarm.SKIP_UI=false;end"><button style="width:100%;margin:4px 0">⏰ Budzik systemowy (Android)</button></a>
    <button style="width:100%;margin:4px 0" onclick="downloadIcs()">📅 Przypomnienie w kalendarzu (.ics)</button>`}
    <button class="ghost" style="width:100%" onclick="disarm()">Anuluj budzik</button></div>`;
+  document.querySelectorAll('[data-perms]').forEach(e=>renderPerms(e));
+  if(!permsOk())toast('Uwaga: brakuje uprawnień – budzik może nie otworzyć aplikacji sam. Zobacz listę poniżej.',6000);
   renderPlan();renderGuard();say(`Budzik ustawiony na ${d.getHours()}:${pad(d.getMinutes())}`)}
 function disarm(){if(N)N.cancelAlarm();S.plan.armed=false;save();$('pAlarmOpts').innerHTML='';renderPlan();renderGuard();toast('Budzik anulowany')}
 function downloadIcs(){const sch=schedule();const f=ts=>new Date(ts).toISOString().replace(/[-:]/g,'').replace(/\.\d+/,'');
@@ -391,9 +405,9 @@ function finishRun(ok){const r=S.run;if(!r)return;S.history.push({ts:r.started,d
   say(ok?'Brawo! Zapisane.':'Zapisane. Następnym razem się uda.');renderGuard();renderHome();renderTasks();setTimeout(()=>go('home'),1500)}
 function abortRun(){sheetConfirm('Przerwać pilnowanie? (bez zapisu w historii)',()=>{S.run=null;save();closeSheet();renderGuard()})}
 
-function renderGuard(){const el=$('guard');const r=S.run;
+function renderGuard(){const el=$('guard');const r=S.run;setTimeout(()=>el.querySelectorAll('[data-perms]').forEach(e=>renderPerms(e)),0);
   if(!r){const sch=schedule();
-    el.innerHTML=S.plan.armed?`<div class="card" style="text-align:center"><div class="mut">Budzik za</div><div class="big" data-alarm>–</div><div class="mut">o ${hhmm(S.plan.alarmAt)} · koniec ${S.plan.deadline}</div><p class="mut">Zostaw aplikację otwartą. Ekran pozostanie włączony.</p><button class="ghost" onclick="disarm()">Anuluj budzik</button></div>
+    el.innerHTML=S.plan.armed?`<div class="card" style="text-align:center"><div class="mut">Budzik za</div><div class="big" data-alarm>–</div><div class="mut">o ${hhmm(S.plan.alarmAt)} · koniec ${S.plan.deadline}</div><p class="mut">${N?'Możesz zamknąć aplikację – budzik sam ją otworzy.':'Zostaw aplikację otwartą. Ekran pozostanie włączony.'}</p><button class="ghost" onclick="disarm()">Anuluj budzik</button></div>${N?'<div data-perms></div>':''}
       <button class="pri" style="width:100%;padding:14px" onclick="startRun(false)">▶ Zacznij teraz</button>`
       :`<div class="card" style="text-align:center"><p>Brak aktywnego budzika.</p><p class="mut">${sch.length?`Plan: ${sch.length} zadań, ${fmtMin(planTotal())}.`:'Ułóż najpierw plan.'}</p>
       <button class="pri" style="width:100%;padding:14px;margin-bottom:8px" onclick="go('plan')">🗓️ Do planu</button>${sch.length?'<button style="width:100%;padding:14px" onclick="startRun(false)">▶ Zacznij teraz (test)</button>':''}</div>`;return}
@@ -442,7 +456,7 @@ function openSettings(){const s=S.settings;sheet(`<h2>Ustawienia</h2>
   <div class="mut">Klucz z console.cloud.google.com z włączonym „Routes API”. Przechowywany tylko na tym telefonie.</div>
   <div class="row" style="margin-top:12px"><button class="grow" onclick="testSound()">🔊 Test dźwięków</button><button class="grow" onclick="exportData()">📋 Kopia danych</button></div>
   <div class="row" style="margin-top:8px"><button class="grow" onclick="importData()">📥 Przywróć dane</button></div>
-  <button class="pri" style="width:100%;margin-top:14px" onclick="saveSettings()">Zapisz</button>`)}
+  <button class="pri" style="width:100%;margin-top:14px" onclick="saveSettings()">Zapisz</button>${N?'<h2>Budzik</h2><div data-perms></div>':''}`);document.querySelectorAll('#sheetBody [data-perms]').forEach(e=>renderPerms(e))}
 function saveSettings(){Object.assign(S.settings,{estimate:$('sE').value,buffer:+$('sB').value,learn:$('sL').checked,apiKey:$('sK').value.trim()});save();closeSheet();renderTasks();renderPlan()}
 function testSound(){audio();beep3();setTimeout(beepLong,1200);setTimeout(()=>say('Teraz: prysznic. Masz 10 minut.'),3200)}
 function exportData(){const t=JSON.stringify({tasks:S.tasks,history:S.history,plan:S.plan,settings:{...S.settings,apiKey:''}});
