@@ -164,8 +164,11 @@ function stopRing(){clearInterval(ringT);ringT=null;$('wake').classList.remove('
 let voicePL=null;
 function pickVoice(){const v=speechSynthesis.getVoices();voicePL=v.find(x=>x.lang&&x.lang.toLowerCase().startsWith('pl'))||null}
 if('speechSynthesis' in window){pickVoice();speechSynthesis.onvoiceschanged=pickVoice}
-function say(t){return new Promise(res=>{if(N){const id=uid();nCb.tts[id]=res;N.speak(t,id);setTimeout(res,10000);return}if(!('speechSynthesis' in window))return res();speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(t);
-  u.lang=S.settings.lang;if(voicePL)u.voice=voicePL;u.volume=1;u.rate=1;u.onend=u.onerror=()=>res();speechSynthesis.speak(u);setTimeout(res,8000)})}
+/* Komunikaty głosowe w kolejce: nowy czeka, aż poprzedni się skończy (nic nie jest ucinane) */
+let sayChain=Promise.resolve();
+function say(t){const p=sayChain.then(()=>sayNow(t));sayChain=p.catch(()=>{});return p}
+function sayNow(t){const limit=Math.max(6000,t.length*110);return new Promise(res=>{if(N){const id=uid();nCb.tts[id]=res;N.speak(t,id);setTimeout(res,limit);return}if(!('speechSynthesis' in window))return res();const u=new SpeechSynthesisUtterance(t);
+  u.lang=S.settings.lang;if(voicePL)u.voice=voicePL;u.volume=1;u.rate=1;u.onend=u.onerror=()=>res();speechSynthesis.speak(u);setTimeout(res,limit)})}
 const SR=window.SpeechRecognition||window.webkitSpeechRecognition;const HAS_SR=!!(N||SR);
 let onceRec=null,onceRes=null;
 function listenOnce(prompt){return new Promise(res=>{
@@ -498,11 +501,13 @@ function absorbTravel(r,k,est){const now=Date.now(),delta=est-r.items[k].sec;con
   cur.planEnd=Math.min(cur.planEnd,t)
   r.warned=false;save();return{delta,cuts,uncovered:Math.max(0,Math.round(delta-take))}}
 const nameOf=it=>{const t=S.tasks.find(x=>x.id===it.taskId);return t?t.name:'zadanie'};
-function announceTravel(name,res){const m=Math.max(1,Math.round(res.delta/60));
-  let txt=`Uwaga, ${name} wydłużył się o ${numUnit(m,'m','acc')}.`;
+function announceTravel(name,res){const m=Math.max(1,Math.round(res.delta/60));const r=S.run;
+  let txt=`Zmiana planu. ${name} wydłużył się o ${numUnit(m,'m','acc')}.`;
   if(res.cuts.length)txt+=' Skracam: '+res.cuts.map(c=>`${c.name} o ${spokenDur(Math.round(c.sec/60)*60||c.sec)}`).join(', ')+'.';
   if(res.uncovered>=30)txt+=` Nie da się w pełni nadrobić – zagrożone spóźnienie o ${spokenDur(Math.round(res.uncovered/60)*60||res.uncovered)}.`;
-  tone(700,.25);setTimeout(()=>say(txt),300);toast('🚗 '+txt,7000)}
+  if(r&&res.cuts.some(c=>c.i===r.idx)){const it=r.items[r.idx];txt+=` ${curName()} kończy się teraz o ${spTime(r.taskStart+it.sec*1000)}.`}
+  if(r){txt+=' '+slackSpoken(r);r.lastSlack=slackMin(finalSlack(r));r.planMsg=`Zmiana planu: ${name} +${fmtMin(res.delta)}`+(res.cuts.length?`; skrócono ${res.cuts.map(c=>`${c.name} −${fmtMin(c.sec)}`).join(', ')}`:'');save()}
+  tone(700,.25);tone(900,.25,.3);setTimeout(()=>say(txt),700);toast('🔄 '+txt,8000)}
 function renderTravelCard(){const el=$('gTravel');const r=S.run;if(!el||!r)return;const list=upcomingTravel(r);if(!list.length){el.innerHTML='';return}
   el.innerHTML=`<div class="card" onclick="openTravelHistory()" style="cursor:pointer">${list.map(({it,t,k})=>{const e=it.lastEst;const worse=e&&e>it.sec;
     return `<div class="row"><span style="font-size:22px">🚗</span><div class="grow"><b>${esc(t.name)}</b>
@@ -523,7 +528,7 @@ function nextTask(manual){const r=S.run;const it=r.items[r.idx];const actual=(Da
   if(manual&&S.settings.learn&&actual>5){const t=S.tasks.find(x=>x.id===it.taskId);if(t)t.samples.push({sec:Math.round(actual),ts:Date.now(),src:'guard'})}
   if(!manual)beepLong();else tone(660,.2);
   const over=Date.now()-it.planEnd;r.lateMsg=over>=30000?`Przekroczono plan o ${lateSpoken(over)}.`:'';
-  r.idx++;r.taskStart=Date.now();r.warned=false;r.half=false;save();
+  r.idx++;r.taskStart=Date.now();r.warned=false;r.half=false;r.planMsg='';save();
   if(r.idx>=r.items.length){askFinish();return}
   setTimeout(announce,manual?300:1800);renderGuard()}
 function askFinish(){const r=S.run;r.asking=true;r.finished=Date.now();save();renderGuard();
@@ -541,7 +546,7 @@ function renderGuard(){const el=$('guard');const r=S.run;setTimeout(()=>el.query
   if(r.asking){el.innerHTML=`<div class="card" style="text-align:center;padding:30px 14px"><div style="font-size:60px">🏁</div><h2>Czy zdążyłeś?</h2><p class="mut">Termin: ${hhmm(r.deadline)} · koniec zadań: ${hhmm(r.finished)}</p>${(()=>{const fm=slackMin(r.deadline-r.finished);return `<div style="font-size:30px;font-weight:800;margin:6px 0 14px;color:${fm<0?'var(--bad)':'var(--ok)'}">${fm>0?`Zapas ${fm} min`:fm<0?`Opóźnienie ${-fm} min`:'Dokładnie na czas'}</div>`})()}
     <div class="row"><button class="ok grow" style="padding:18px;font-size:20px" onclick="finishRun(true)">Tak 👍</button><button class="bad grow" style="padding:18px;font-size:20px" onclick="finishRun(false)">Nie 👎</button></div></div>`;return}
   ensurePlanEnds(r);const it=r.items[r.idx];const nx=r.items[r.idx+1];const nt=nx&&S.tasks.find(x=>x.id===nx.taskId);
-  el.innerHTML=`${r.lateMsg?`<div class="card" style="background:#7f1d1d;color:#fff;text-align:center;margin-top:0">⚠️ ${esc(r.lateMsg)}</div>`:''}
+  el.innerHTML=`${r.lateMsg?`<div class="card" style="background:#7f1d1d;color:#fff;text-align:center;margin-top:0">⚠️ ${esc(r.lateMsg)}</div>`:''}${r.planMsg?`<div class="card" style="background:#78350f;color:#fff;text-align:center;margin-top:0" onclick="openTravelHistory()">🔄 ${esc(r.planMsg)}</div>`:''}
   <div style="text-align:center"><div class="mut">Zadanie ${r.idx+1} z ${r.items.length}</div><h2 style="font-size:28px;margin:4px 0">${esc(curName())}</h2>
   <div>Koniec wg planu: <b style="color:var(--acc);font-size:20px">${hhmm(it.planEnd)}</b></div><div class="mut" id="gProj"></div></div>
   <div class="ring"><svg width="240" height="240"><circle cx="120" cy="120" r="108" stroke="#273449" stroke-width="14" fill="none"/><circle id="arc" cx="120" cy="120" r="108" stroke="var(--acc)" stroke-width="14" fill="none" stroke-linecap="round" stroke-dasharray="678.6" stroke-dashoffset="0"/></svg>
