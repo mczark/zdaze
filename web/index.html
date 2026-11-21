@@ -467,7 +467,8 @@ function restartTask(){const r=S.run;if(!r||r.asking)return;ensurePlanEnds(r);co
   it.sec=it.orig||it.sec;r.taskStart=Date.now();r.warned=false;r.half=false;r.lateMsg='';save();renderGuard();tone(990,.12);
   r.lastSlack=slackMin(finalSlack(r));say(`Start: ${curName()}. Masz ${spokenDur(it.sec)}. ${slackSpoken(r)}`)}
 /* ===== Sprawdzanie dojazdu w trakcie pilnowania (co 5 min) ===== */
-const TRAVEL_EVERY=5*60e3;let travelBusy=false;
+const TRAVEL_EVERY=10*60e3,TRAVEL_WINDOW=60*60e3;let travelBusy=false,travelCardAt=0;
+const inTravelWindow=(r,o)=>projStart(r,o.k)-Date.now()<=TRAVEL_WINDOW;
 /* czas całej trasy z przystankami dla wyjazdu o depTs (odcinki kolejno + postoje) */
 async function travelEstimate(m,depTs){const pts=[m.origin,...(m.stops||[]).map(s=>s.addr),m.dest];let tm=depTs,tot=0;
   for(let i=0;i<pts.length-1;i++){const s=await routeSec(pts[i],pts[i+1],m.mode,new Date(Math.max(tm,Date.now()+60e3)));tot+=s;tm+=s*1000;
@@ -475,8 +476,9 @@ async function travelEstimate(m,depTs){const pts=[m.origin,...(m.stops||[]).map(
 /* przewidywany start zadania k (k > bieżące) */
 function projStart(r,k){const it=r.items[r.idx];let t=Math.max(Date.now(),r.taskStart+it.sec*1000);for(let i=r.idx+1;i<k;i++)t+=r.items[i].sec*1000;return t}
 const upcomingTravel=r=>r.items.map((it,k)=>({it,k,t:S.tasks.find(x=>x.id===it.taskId)})).filter(o=>o.k>r.idx&&o.t&&o.t.type==='travel'&&o.t.maps&&o.t.maps.origin&&o.t.maps.dest);
-async function checkTravel(force){const r=S.run;if(!r||r.asking||travelBusy)return;const list=upcomingTravel(r);if(!list.length)return;
-  r.lastTravelCheck=Date.now();save();if(!S.settings.apiKey){renderTravelCard();return}
+async function checkTravel(force){const r=S.run;if(!r||r.asking||travelBusy||!S.settings.apiKey)return;
+  const list=upcomingTravel(r).filter(o=>force||inTravelWindow(r,o));if(!list.length){if(force)toast('Sprawdzanie zaczyna się godzinę przed wyjazdem');return}
+  r.lastTravelCheck=Date.now();save();
   travelBusy=true;r.travelChecks=r.travelChecks||[];
   try{for(const {it,k,t} of list){const dep=projStart(r,k);let est;
       try{est=Math.round(await travelEstimate(t.maps,dep))}catch(e){r.travelChecks.push({ts:Date.now(),k,name:t.name,dep,planned:it.sec,err:e.message});continue}
@@ -502,13 +504,14 @@ function announceTravel(name,res){const m=Math.max(1,Math.round(res.delta/60));
   if(res.uncovered>=30)txt+=` Nie da się w pełni nadrobić – zagrożone spóźnienie o ${spokenDur(Math.round(res.uncovered/60)*60||res.uncovered)}.`;
   tone(700,.25);setTimeout(()=>say(txt),300);toast('🚗 '+txt,7000)}
 function renderTravelCard(){const el=$('gTravel');const r=S.run;if(!el||!r)return;const list=upcomingTravel(r);if(!list.length){el.innerHTML='';return}
-  el.innerHTML=`<div class="card" onclick="openTravelHistory()" style="cursor:pointer">${list.map(({it,t})=>{const e=it.lastEst;const worse=e&&e>it.sec;
+  el.innerHTML=`<div class="card" onclick="openTravelHistory()" style="cursor:pointer">${list.map(({it,t,k})=>{const e=it.lastEst;const worse=e&&e>it.sec;
     return `<div class="row"><span style="font-size:22px">🚗</span><div class="grow"><b>${esc(t.name)}</b>
-      <div class="mut" style="font-size:13px">${!S.settings.apiKey?'brak klucza Google API – czas dojazdu nie jest sprawdzany':e?`sprawdzono ${hhmm(it.lastCheck)} · w planie ${fmtMin(it.sec)}`:'sprawdzam…'}</div></div>
+      <div class="mut" style="font-size:13px">${!S.settings.apiKey?'brak klucza Google API – czas dojazdu nie jest sprawdzany':(()=>{const dep=projStart(r,k),win=dep-Date.now()<=TRAVEL_WINDOW;
+        return `wyjazd ok. ${hhmm(dep)} · w planie ${fmtMin(it.sec)}<br>`+(e?`sprawdzono ${hhmm(it.lastCheck)}`+(win?` · następne ok. ${hhmm(Math.max(Date.now(),(r.lastTravelCheck||0)+TRAVEL_EVERY))}`:''):win?'sprawdzam…':`sprawdzanie od ${hhmm(dep-TRAVEL_WINDOW)} (godzinę przed wyjazdem)`)})()}</div></div>
       ${e?`<div style="text-align:right"><div style="font-size:24px;font-weight:800;color:${worse?'var(--bad)':'var(--ok)'}">${fmtMin(e)}</div><div class="mut" style="font-size:12px">teraz</div></div>`:''}</div>`}).join('<div style="height:8px"></div>')}
     <div class="mut" style="font-size:12px;margin-top:6px;text-align:right">historia sprawdzeń ›</div></div>`}
 function openTravelHistory(){const r=S.run;const L=(r&&r.travelChecks||[]).slice().reverse();
-  sheet(`<h2>🚗 Historia sprawdzeń dojazdu</h2><p class="mut">Co 5 minut, z prognozą ruchu dla przewidywanej godziny wyjazdu.</p>
+  sheet(`<h2>🚗 Historia sprawdzeń dojazdu</h2><p class="mut">Co 10 minut w ostatniej godzinie przed wyjazdem, z prognozą ruchu dla przewidywanej godziny wyjazdu.</p>
   ${L.length?L.map(c=>`<div class="pitem" style="align-items:flex-start"><span class="time">${hhmm(c.ts)}</span><div class="grow"><b>${esc(c.name)}</b> <span class="mut">wyjazd ${hhmm(c.dep)}</span>
     <div>${c.err?`<span style="color:var(--bad)">błąd: ${esc(c.err)}</span>`:`${fmtMin(c.est)} <span class="mut">(w planie ${fmtMin(c.planned)})</span> ${c.est>c.planned+30?'<span style="color:var(--bad)">▲</span>':'<span style="color:var(--ok)">✓</span>'}`}</div>
     ${c.action?`<div class="mut" style="font-size:13px">Plan zaktualizowany: dojazd +${fmtMin(c.action.delta)}${c.action.cuts.length?'; skrócono '+c.action.cuts.map(x=>`${esc(x.name)} −${fmtMin(x.sec)}`).join(', '):''}${c.action.uncovered>=30?`; <span style="color:var(--bad)">nienadrobione ${fmtMin(c.action.uncovered)}</span>`:''}</div>`:''}</div></div>`).join('')
@@ -615,7 +618,8 @@ function tick(){const now=Date.now();
       const gf=$('gFinal');if(gf){const fm=slackMin(finalSlack(r));gf.textContent=fm>0?`Zapas ${fm} min`:fm<0?`Opóźnienie ${-fm} min`:'Dokładnie na czas';
         gf.style.color=fm>0?'var(--ok)':fm<0?'var(--bad)':'var(--acc)';$('gFinalCard').style.border=`2px solid ${fm<0?'var(--bad)':fm>0?'var(--ok)':'var(--acc)'}`;
         $('gFinalSub').textContent=`przewidywany koniec ${hhmm(r.deadline-finalSlack(r))}`}}
-    if(!travelBusy&&Date.now()-(r.lastTravelCheck||r.started-TRAVEL_EVERY+5000)>=TRAVEL_EVERY)checkTravel();
+    if(!travelBusy&&S.settings.apiKey&&now-(r.lastTravelCheck||0)>=TRAVEL_EVERY&&upcomingTravel(r).some(o=>inTravelWindow(r,o)))checkTravel();
+    if(now-travelCardAt>15000){travelCardAt=now;renderTravelCard()}
     if(!r.half&&el>=it.sec/2&&it.sec>=80){r.half=true;save();say('Połowa czasu')}
     if(!r.warned&&left<=30&&it.sec>35){r.warned=true;save();beep3()}
     if(left<=0)nextTask(false)}
