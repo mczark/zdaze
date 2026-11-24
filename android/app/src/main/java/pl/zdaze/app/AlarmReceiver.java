@@ -66,11 +66,67 @@ public class AlarmReceiver extends BroadcastReceiver {
         c.getSystemService(AlarmManager.class).cancel(fire(c));
     }
 
-    static void cancelNotification(Context c) { c.getSystemService(NotificationManager.class).cancel(NID); }
+    static void cancelNotification(Context c) {
+        NotificationManager nm = c.getSystemService(NotificationManager.class);
+        nm.cancel(NID); nm.cancel(NID_END);
+    }
+
+    /* ===== Koniec planu w trakcie pilnowania: wybudza aplikację z pytaniem „Czy zdążyłeś?” ===== */
+    static final int NID_END = 43;
+    static final String CH_END = "zdaze_end";
+
+    static PendingIntent endFire(Context c) {
+        return PendingIntent.getBroadcast(c, 5, new Intent(c, AlarmReceiver.class).putExtra("runEnd", true),
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+    }
+
+    static void scheduleRunEnd(Context c, long ts) {
+        AlarmManager am = c.getSystemService(AlarmManager.class);
+        try { am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, ts, endFire(c)); }
+        catch (SecurityException e) { am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, ts, endFire(c)); }
+    }
+
+    static void cancelRunEnd(Context c) {
+        c.getSystemService(AlarmManager.class).cancel(endFire(c));
+        c.getSystemService(NotificationManager.class).cancel(NID_END);
+    }
+
+    static Intent endIntent(Context c) {
+        return new Intent(c, MainActivity.class).putExtra("runEnd", true)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
+    }
+
+    @SuppressWarnings("deprecation")
+    static void onRunEnd(Context c) {
+        try {
+            PowerManager pm = c.getSystemService(PowerManager.class);
+            pm.newWakeLock(PowerManager.FULL_WAKE_LOCK | PowerManager.ACQUIRE_CAUSES_WAKEUP | PowerManager.ON_AFTER_RELEASE, "zdaze:end").acquire(10000);
+        } catch (Exception ignored) {}
+        NotificationManager nm = c.getSystemService(NotificationManager.class);
+        if (nm.getNotificationChannel(CH_END) == null) {
+            NotificationChannel ch = new NotificationChannel(CH_END, "Koniec planu", NotificationManager.IMPORTANCE_HIGH);
+            ch.enableVibration(true);
+            ch.setLockscreenVisibility(Notification.VISIBILITY_PUBLIC);
+            nm.createNotificationChannel(ch);
+        }
+        PendingIntent pi = PendingIntent.getActivity(c, 6, endIntent(c), PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+        nm.notify(NID_END, new Notification.Builder(c, CH_END)
+                .setSmallIcon(R.drawable.ic_stat)
+                .setContentTitle("Plan zakończony – czy zdążyłeś?")
+                .setContentText("Dotknij, aby odpowiedzieć")
+                .setCategory(Notification.CATEGORY_REMINDER)
+                .setVisibility(Notification.VISIBILITY_PUBLIC)
+                .setFullScreenIntent(pi, true)
+                .setContentIntent(pi)
+                .setAutoCancel(true)
+                .build());
+        try { c.startActivity(endIntent(c)); } catch (Exception ignored) {}
+    }
 
     @Override
     @SuppressWarnings("deprecation")
     public void onReceive(Context c, Intent intent) {
+        if (intent.getBooleanExtra("runEnd", false)) { onRunEnd(c); return; }
         boolean test = intent.getBooleanExtra("test", false);
         String label = test ? "Test budzika" : prefs(c).getString("label", "Zdążę!");
         if (!test) prefs(c).edit().clear().apply();

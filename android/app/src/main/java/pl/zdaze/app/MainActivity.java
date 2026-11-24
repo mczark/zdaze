@@ -43,7 +43,7 @@ public class MainActivity extends Activity {
     private TextToSpeech tts;
     private boolean ttsReady = false;
     private SpeechRecognizer recognizer;
-    private boolean pageLoaded = false, pendingAlarm = false, pendingTest = false;
+    private boolean pageLoaded = false, pendingAlarm = false, pendingTest = false, pendingRunEnd = false;
 
     @Override
     protected void onCreate(Bundle b) {
@@ -78,6 +78,7 @@ public class MainActivity extends Activity {
             @Override
             public void onPageFinished(WebView v, String url) {
                 pageLoaded = true;
+                if (pendingRunEnd) { pendingRunEnd = false; js("window.__runEnd&&window.__runEnd()"); }
                 if (pendingAlarm) { pendingAlarm = false; js("window.__nativeAlarm&&window.__nativeAlarm(" + pendingTest + ")"); }
             }
         });
@@ -169,6 +170,11 @@ public class MainActivity extends Activity {
     protected void onNewIntent(Intent i) { super.onNewIntent(i); setIntent(i); handleIntent(i); }
 
     private void handleIntent(Intent i) {
+        if (i != null && i.getBooleanExtra("runEnd", false)) {
+            i.removeExtra("runEnd");
+            AlarmReceiver.cancelNotification(this);
+            if (pageLoaded) js("window.__runEnd&&window.__runEnd()"); else pendingRunEnd = true;
+        }
         if (i != null && i.getBooleanExtra("alarm", false)) {
             boolean test = i.getBooleanExtra("test", false);
             i.removeExtra("alarm"); // obsłuż tylko raz (np. nie po odtworzeniu aktywności)
@@ -259,6 +265,12 @@ public class MainActivity extends Activity {
 
         @JavascriptInterface
         public void openPermission(String which) { runOnUiThread(() -> openPerm(which)); }
+
+        @JavascriptInterface
+        public void setRunEnd(double ts) { AlarmReceiver.scheduleRunEnd(MainActivity.this, (long) ts); }
+
+        @JavascriptInterface
+        public void cancelRunEnd() { AlarmReceiver.cancelRunEnd(MainActivity.this); }
 
         @JavascriptInterface
         public void testAlarm() { AlarmReceiver.scheduleTest(MainActivity.this, System.currentTimeMillis() + 15000); }

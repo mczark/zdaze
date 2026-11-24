@@ -557,6 +557,19 @@ function progressHtml(r,open){ensureP0(r);const done=r.asking?r.items.length:r.i
         <div class="mut" style="font-size:13px">Plan: ${hhmm(it.p0s)}–${hhmm(it.p0e)} · ${fmtMin(pDur)}</div>${act}</div></div>`}).join('');
   return `<div class="card"><div class="row" onclick="toggleProgress()" style="cursor:pointer"><b class="grow">📋 Przebieg planu</b><span class="mut">${Math.min(done,r.items.length)}/${r.items.length} zakończone</span><span id="progArrow" style="font-size:18px;width:20px;text-align:center">${open?'▾':'▸'}</span></div>
     <div id="progBody" style="display:${open?'block':'none'};margin-top:6px">${rows}</div></div>`}
+/* ===== Praca w tle (np. nawigacja w Mapach) ===== */
+let runEndSet=0;
+/* przewidywany koniec planu → natywny alarm, który wybudzi aplikację z pytaniem */
+function syncRunEnd(){const r=S.run;if(!N||!r||r.asking)return;const end=Math.round(r.deadline-finalSlack(r));if(Math.abs(end-runEndSet)>2000){runEndSet=end;N.setRunEnd(end)}}
+/* po powrocie z tła: zadania, które minęły, zamykamy z ich rzeczywistymi godzinami końca – bez serii sygnałów */
+function catchUp(){const r=S.run;let moved=false;
+  while(r.idx<r.items.length){const it=r.items[r.idx],end=r.taskStart+it.sec*1000;if(end>Date.now()-1500)break;
+    it.aEnd=end;if(!it.aStart)it.aStart=r.taskStart;const over=end-it.planEnd;r.lateMsg=over>=30000?`Przekroczono plan o ${lateSpoken(over)}.`:'';
+    r.idx++;r.taskStart=end;r.warned=false;r.half=false;r.planMsg='';if(r.items[r.idx])r.items[r.idx].aStart=end;moved=true}
+  if(!moved)return false;save();
+  if(r.idx>=r.items.length){r.finished=r.taskStart;beepLong();askFinish()}else{beepLong();setTimeout(announce,1800);renderGuard()}return true}
+window.__runEnd=()=>{go('guard');const r=S.run;if(!r)return;if(!r.asking)catchUp();
+  if(r.asking&&Date.now()-(r.askedAt||0)>15000){renderGuard();askQuestion(`Plan zakończony. ${slackSpoken(r).replace(' na koniec','')} Czy zdążyłeś?`)}};
 function guardDone(){if(!S.run||S.run.asking)return;nextTask(true)}
 function nextTask(manual){const r=S.run;const it=r.items[r.idx];const actual=(Date.now()-r.taskStart)/1000;
   if(manual&&S.settings.learn&&actual>5){const t=S.tasks.find(x=>x.id===it.taskId);if(t)t.samples.push({sec:Math.round(actual),ts:Date.now(),src:'guard'})}
@@ -565,12 +578,15 @@ function nextTask(manual){const r=S.run;const it=r.items[r.idx];const actual=(Da
   it.aEnd=Date.now();if(!it.aStart)it.aStart=r.taskStart;r.idx++;r.taskStart=Date.now();if(r.items[r.idx])r.items[r.idx].aStart=r.taskStart;r.warned=false;r.half=false;r.planMsg='';save();
   if(r.idx>=r.items.length){askFinish();return}
   setTimeout(announce,manual?300:1800);renderGuard()}
-function askFinish(){const r=S.run;r.asking=true;r.finished=Date.now();save();renderGuard();
-  say(`Wszystkie zadania zakończone. ${slackSpoken(r).replace(' na koniec','')} Czy zdążyłeś?`).then(async()=>{if(!S.run||!S.run.asking)return;if(cmdOn)return;const a=await listenOnce('Czy zdążyłeś? Powiedz „tak” lub „nie”');
+function askFinish(){const r=S.run;r.asking=true;r.finished=r.finished||Date.now();save();renderGuard();
+  if(N&&!document.hidden)N.cancelRunEnd(); // aplikacja na wierzchu – natywne wybudzenie niepotrzebne
+  askQuestion(`Wszystkie zadania zakończone. ${slackSpoken(r).replace(' na koniec','')} Czy zdążyłeś?`)}
+function askQuestion(txt){const r=S.run;if(!r)return;r.askedAt=Date.now();save();
+  say(txt).then(async()=>{if(!S.run||!S.run.asking)return;if(cmdOn)return;const a=await listenOnce('Czy zdążyłeś? Powiedz „tak” lub „nie”');
     if(a&&S.run&&S.run.asking){const t=a.toLowerCase();if(/\btak\b|zdąż/.test(t)&&!/\bnie\b/.test(t))finishRun(true);else if(/\bnie\b/.test(t))finishRun(false)}})}
-function finishRun(ok){const r=S.run;if(!r)return;S.history.push({ts:r.started,deadline:r.deadline,finished:r.finished||Date.now(),ok,n:r.items.length,plan:r.planName||''});S.run=null;save();rearm();if(N)N.keepAwake(false);
+function finishRun(ok){const r=S.run;if(!r)return;if(N)N.cancelRunEnd();runEndSet=0;S.history.push({ts:r.started,deadline:r.deadline,finished:r.finished||Date.now(),ok,n:r.items.length,plan:r.planName||''});S.run=null;save();rearm();if(N)N.keepAwake(false);
   say(ok?'Brawo! Zapisane.':'Zapisane. Następnym razem się uda.');renderGuard();renderHome();renderTasks();setTimeout(()=>go('home'),1500)}
-function abortRun(){sheetConfirm('Przerwać pilnowanie? (bez zapisu w historii)',()=>{S.run=null;save();rearm();closeSheet();renderGuard();renderHome()})}
+function abortRun(){sheetConfirm('Przerwać pilnowanie? (bez zapisu w historii)',()=>{if(N)N.cancelRunEnd();runEndSet=0;S.run=null;save();rearm();closeSheet();renderGuard();renderHome()})}
 
 function renderGuard(){const el=$('guard');const r=S.run;setTimeout(()=>el.querySelectorAll('[data-perms]').forEach(e=>renderPerms(e)),0);
   if(!r){const a=S.alarm,ap=a&&planById(a.planId);const ready=S.plans.filter(p=>p.items.length);
@@ -653,6 +669,7 @@ function tick(){const now=Date.now();
   if(S.alarm&&!S.run){const a=document.querySelector('[data-alarm]');if(a)a.textContent=fmtDur((S.alarm.at-now)/1000);
     if(now>=S.alarm.at){if(now-S.alarm.at<3*3600e3)startRun(S.alarm.planId,S.alarm.deadline,true);else{const p=planById(S.alarm.planId);if(p&&p.repeat==='once')p.enabled=false;S.alarmFloor=S.alarm.at;rearm({keep:true});renderAll()}}}
   const r=S.run;if(r&&!r.asking){const it=r.items[r.idx];const el=(now-r.taskStart)/1000;const left=it.sec-el;
+    if(left<=-1.5){catchUp();return}
     const g=$('gLeft');if(g){g.textContent=left>=0?fmtDur(left):'-'+fmtDur(-left);g.style.color=left<=30?'var(--warn)':'';
       const arc=$('arc');if(arc){arc.style.strokeDashoffset=678.6*Math.min(1,el/Math.max(1,it.sec));arc.style.stroke=left<=30?'var(--warn)':'var(--acc)'}
       const rest=r.items.slice(r.idx+1).reduce((a,x)=>a+x.sec,0);const proj=now+Math.max(0,left)*1000+rest*1000;const sl=Math.round((r.deadline-proj)/60000);
@@ -666,7 +683,8 @@ function tick(){const now=Date.now();
     if(now-travelCardAt>15000){travelCardAt=now;renderTravelCard()}
     if(!r.half&&el>=it.sec/2&&it.sec>=80){r.half=true;save();say('Połowa czasu')}
     if(!r.warned&&left<=30&&it.sec>35){r.warned=true;save();beep3()}
-    if(left<=0)nextTask(false)}
+    if(left<=0){nextTask(false);return}
+    if(now-(r._syncAt||0)>5000){r._syncAt=now;syncRunEnd()}}
 }
 setInterval(tick,250);
 
