@@ -128,8 +128,12 @@ window.__ttsDone=id=>{const f=nCb.tts[id];delete nCb.tts[id];f&&f()};
 window.__srPartial=t=>{nCb.rec&&nCb.rec.onresult&&nCb.rec.onresult(t,false)};
 window.__srFinal=t=>{nCb.rec&&nCb.rec.onresult&&nCb.rec.onresult(t,true)};
 window.__srEnd=err=>{const r=nCb.rec;nCb.rec=null;if(r){if(err&&r.onerror)r.onerror({error:err});r.onend&&r.onend()}};
-window.__nativeAlarm=()=>{if(S.alarm&&!S.run&&Date.now()>=S.alarm.at-120000)startRun(S.alarm.planId,S.alarm.deadline,true);else if(!S.run){toast('⏰ Budzik sam otworzył aplikację – działa!',5000);say('Test budzika udany.')}};
-window.__resume=()=>{if(!S.run)rearm();document.querySelectorAll('[data-perms]').forEach(e=>renderPerms(e));tick()};
+window.__nativeAlarm=test=>{
+  if(test){if(!S.run){toast('⏰ Test: budzik sam otworzył aplikację – działa!',5000);say('Test budzika udany.')}return}
+  if(S.run){go('guard');return}
+  rearm({keep:true});const a=S.alarm;
+  if(a&&Date.now()>=a.at-120000&&Date.now()-a.at<3*3600e3)startRun(a.planId,a.deadline,true);else go(a?'guard':'home')};
+window.__resume=()=>{if(!S.run)rearm({keep:true});document.querySelectorAll('[data-perms]').forEach(e=>renderPerms(e));tick()};
 /* Uprawnienia potrzebne, by budzik sam otwierał aplikację (tylko Android) */
 const PERMS=[['notif','Powiadomienia','dzwonek i powiadomienie budzika'],['overlay','Wyświetlanie nad innymi aplikacjami','pozwala budzikowi samemu otworzyć aplikację'],
   ['fullscreen','Powiadomienia pełnoekranowe','pokazuje aplikację na zablokowanym ekranie'],['battery','Bez ograniczeń baterii','system nie uśpi budzika'],['exact','Dokładne alarmy','budzik co do minuty']];
@@ -157,7 +161,7 @@ function tone(freq,dur,when=0,vol=.6,type='sine'){const a=audio(),o=a.createOsci
 const beep3=()=>{for(let i=0;i<3;i++)tone(1200,.12,i*.25,.7,'square')};
 const beepLong=()=>{tone(880,1.6,0,1,'square');tone(440,1.6,0,.5,'square')};
 let ringT=null;
-function startRing(){$('wake').classList.add('on');let n=0;const f=()=>{for(let i=0;i<4;i++)tone(988,.15,i*.2,1,'square');if(++n>40)stopRing()};f();ringT=setInterval(f,1500)}
+function startRing(){$('wake').classList.add('on');let n=0;const f=()=>{if(n++>=3){stopRing();return}for(let i=0;i<4;i++)tone(988,.15,i*.2,1,'square')};f();ringT=setInterval(f,1500)}
 function stopRing(){clearInterval(ringT);ringT=null;$('wake').classList.remove('on');if(S.run&&!S.run.announced){S.run.announced=true;save();announce()}}
 
 /* ========== MOWA ========== */
@@ -350,10 +354,12 @@ function conflicts(p){if(!p.items.length)return[];const now=Date.now(),to=now+14
 function conflictText(c){const wk=c.weekly;
   return `„${esc(c.q.name)}” – ${wk?'co '+new Date(c.a.start).toLocaleDateString('pl',{weekday:'long'}):fmtOcc(c.a.start).replace(/ \d+:\d+$/,'')}: ${hhmm(c.a.start)}–${hhmm(c.a.deadline)} vs ${hhmm(c.b.start)}–${hhmm(c.b.deadline)}`}
 /* najbliższy budzik ze wszystkich aktywnych planów */
-function rearm(){const now=Date.now();let best=null;
-  S.plans.forEach(p=>{if(!p.enabled||!p.items.length)return;const o=planNext(p,now);if(o&&(!best||o.start<best.at))best={planId:p.id,at:o.start,deadline:o.deadline}});
+/* alarmFloor: uruchomienia ze startem <= floor są „zużyte”. Floor przesuwa się przy działaniach użytkownika
+   i starcie/końcu pilnowania – ale NIE przy samym otwarciu aplikacji, żeby należny budzik nie został przeskoczony. */
+function rearm(opts){const now=Date.now();if(!(opts&&opts.keep)||!S.alarmFloor)S.alarmFloor=now;let best=null;
+  S.plans.forEach(p=>{if(!p.enabled||!p.items.length)return;const o=planNext(p,S.alarmFloor);if(o&&(!best||o.start<best.at))best={planId:p.id,at:o.start,deadline:o.deadline}});
   const prev=S.alarm;S.alarm=best;save();
-  if(N){if(best&&(!prev||prev.at!==best.at||prev.planId!==best.planId))N.setAlarm(best.at,'Zdążę! – '+planById(best.planId).name);else if(!best&&prev)N.cancelAlarm()}
+  if(N){if(best&&best.at>now+1000&&(!prev||prev.at!==best.at||prev.planId!==best.planId))N.setAlarm(best.at,'Zdążę! – '+planById(best.planId).name);else if(!best&&prev)N.cancelAlarm()}
   if(best&&!S.run)requestWake()}
 function newPlan(kind){const p={id:uid(),name:kind==='none'?'Profil '+(S.plans.filter(x=>x.repeat==='none').length+1):'Plan '+(S.plans.length+1),deadline:'07:45',items:[],repeat:kind==='none'?'none':'weekly',days:[1,2,3,4,5],date:'',enabled:false,skip:[]};S.plans.push(p);save();openPlan(p.id)}
 function openPlan(id){editPlanId=id;renderPlan();window.scrollTo(0,0)}
@@ -624,7 +630,7 @@ function renderAll(){renderMute();renderTasks();renderPlan();renderGuard();rende
 function tick(){const now=Date.now();
   if(S.running){const e=document.querySelector('[data-live]');if(e)e.textContent=fmtDur((now-S.running.start)/1000)}
   if(S.alarm&&!S.run){const a=document.querySelector('[data-alarm]');if(a)a.textContent=fmtDur((S.alarm.at-now)/1000);
-    if(now>=S.alarm.at){if(now-S.alarm.at<3*3600e3)startRun(S.alarm.planId,S.alarm.deadline,true);else{const p=planById(S.alarm.planId);if(p&&p.repeat==='once')p.enabled=false;rearm();renderAll()}}}
+    if(now>=S.alarm.at){if(now-S.alarm.at<3*3600e3)startRun(S.alarm.planId,S.alarm.deadline,true);else{const p=planById(S.alarm.planId);if(p&&p.repeat==='once')p.enabled=false;S.alarmFloor=S.alarm.at;rearm({keep:true});renderAll()}}}
   const r=S.run;if(r&&!r.asking){const it=r.items[r.idx];const el=(now-r.taskStart)/1000;const left=it.sec-el;
     const g=$('gLeft');if(g){g.textContent=left>=0?fmtDur(left):'-'+fmtDur(-left);g.style.color=left<=30?'var(--warn)':'';
       const arc=$('arc');if(arc){arc.style.strokeDashoffset=678.6*Math.min(1,el/Math.max(1,it.sec));arc.style.stroke=left<=30?'var(--warn)':'var(--acc)'}
@@ -645,7 +651,7 @@ setInterval(tick,250);
 
 /* ========== START ========== */
 renderAll();go(S.run?'guard':'home');
-if(!S.run)rearm();if(S.alarm||S.run)requestWake();
+if(!S.run)rearm({keep:true});if(S.alarm||S.run)requestWake();
 if(!N&&'serviceWorker' in navigator&&location.protocol.startsWith('http'))navigator.serviceWorker.register('sw.js').catch(()=>{});
 document.addEventListener('click',()=>audio(),{once:true});
 </script>

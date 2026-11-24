@@ -43,7 +43,7 @@ public class MainActivity extends Activity {
     private TextToSpeech tts;
     private boolean ttsReady = false;
     private SpeechRecognizer recognizer;
-    private boolean pageLoaded = false, pendingAlarm = false;
+    private boolean pageLoaded = false, pendingAlarm = false, pendingTest = false;
 
     @Override
     protected void onCreate(Bundle b) {
@@ -78,7 +78,7 @@ public class MainActivity extends Activity {
             @Override
             public void onPageFinished(WebView v, String url) {
                 pageLoaded = true;
-                if (pendingAlarm) { pendingAlarm = false; js("window.__nativeAlarm&&window.__nativeAlarm()"); }
+                if (pendingAlarm) { pendingAlarm = false; js("window.__nativeAlarm&&window.__nativeAlarm(" + pendingTest + ")"); }
             }
         });
         setContentView(web);
@@ -170,8 +170,11 @@ public class MainActivity extends Activity {
 
     private void handleIntent(Intent i) {
         if (i != null && i.getBooleanExtra("alarm", false)) {
+            boolean test = i.getBooleanExtra("test", false);
+            i.removeExtra("alarm"); // obsłuż tylko raz (np. nie po odtworzeniu aktywności)
             AlarmReceiver.cancelNotification(this);
-            if (pageLoaded) js("window.__nativeAlarm&&window.__nativeAlarm()"); else pendingAlarm = true;
+            if (pageLoaded) js("window.__nativeAlarm&&window.__nativeAlarm(" + test + ")");
+            else { pendingAlarm = true; pendingTest = test; }
         }
     }
 

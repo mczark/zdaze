@@ -32,20 +32,20 @@ public class AlarmReceiver extends BroadcastReceiver {
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
     }
 
-    static Intent openIntent(Context c) {
-        return new Intent(c, MainActivity.class).putExtra("alarm", true)
+    static Intent openIntent(Context c, boolean test) {
+        return new Intent(c, MainActivity.class).putExtra("alarm", true).putExtra("test", test)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
     }
 
-    static PendingIntent open(Context c) {
-        return PendingIntent.getActivity(c, 2, openIntent(c), PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+    static PendingIntent open(Context c, boolean test) {
+        return PendingIntent.getActivity(c, test ? 4 : 2, openIntent(c, test), PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
     }
 
     static void schedule(Context c, long ts, String label) {
         prefs(c).edit().putLong("ts", ts).putString("label", label).apply();
         AlarmManager am = c.getSystemService(AlarmManager.class);
         try {
-            am.setAlarmClock(new AlarmManager.AlarmClockInfo(ts, open(c)), fire(c));
+            am.setAlarmClock(new AlarmManager.AlarmClockInfo(ts, open(c, false)), fire(c));
         } catch (SecurityException e) {
             // brak zgody na dokładne alarmy – najlepsza dostępna alternatywa
             am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, ts, fire(c));
@@ -57,7 +57,7 @@ public class AlarmReceiver extends BroadcastReceiver {
         PendingIntent pi = PendingIntent.getBroadcast(c, 3, new Intent(c, AlarmReceiver.class).putExtra("test", true),
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
         AlarmManager am = c.getSystemService(AlarmManager.class);
-        try { am.setAlarmClock(new AlarmManager.AlarmClockInfo(ts, open(c)), pi); }
+        try { am.setAlarmClock(new AlarmManager.AlarmClockInfo(ts, open(c, true)), pi); }
         catch (SecurityException e) { am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, ts, pi); }
     }
 
@@ -102,8 +102,8 @@ public class AlarmReceiver extends BroadcastReceiver {
                 .setContentText(label + " · dotknij, aby otworzyć")
                 .setCategory(Notification.CATEGORY_ALARM)
                 .setVisibility(Notification.VISIBILITY_PUBLIC)
-                .setFullScreenIntent(open(c), true)
-                .setContentIntent(open(c))
+                .setFullScreenIntent(open(c, test), true)
+                .setContentIntent(open(c, test))
                 .setOngoing(true)
                 .setAutoCancel(true)
                 .build();
@@ -111,6 +111,6 @@ public class AlarmReceiver extends BroadcastReceiver {
         nm.notify(NID, n);
 
         // Bezpośrednie otwarcie aplikacji
-        try { c.startActivity(openIntent(c)); } catch (Exception ignored) {}
+        try { c.startActivity(openIntent(c, test)); } catch (Exception ignored) {}
     }
 }
