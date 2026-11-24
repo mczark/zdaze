@@ -453,7 +453,7 @@ function startRun(planId,deadline,fromAlarm){
   const p=planById(planId);if(!p||!p.items.length)return toast('Plan jest pusty');
   const now=Date.now();if(!deadline)deadline=now+planTotal(p)*1000;const sch=schedule(p,deadline);
   S.run={planId:p.id,planName:p.name,items:sch.map(i=>({taskId:i.taskId,sec:i.sec})),idx:0,taskStart:now,deadline,warned:false,half:false,announced:!fromAlarm,asking:false,started:now,lateMsg:''};
-  ensurePlanEnds(S.run);
+  ensurePlanEnds(S.run);ensureP0(S.run);S.run.items[0].aStart=now;
   if(fromAlarm&&p.repeat==='once')p.enabled=false;
   editPlanId=null;save();rearm();requestWake();go('guard');renderGuard();
   if(fromAlarm){startRing();if(!N)try{new Notification('Zdążę! – pobudka',{body:'Czas zacząć: '+curName()})}catch(e){}}else announce()}
@@ -480,7 +480,7 @@ function shorten(mode){const r=S.run;if(!r||r.asking)return;const it=r.items[r.i
   if(left<=0){nextTask(false);return}
   renderGuard();toast(`Skrócono – zostało ${fmtDur(left)}`);tone(880,.12);r.lastSlack=slackMin(finalSlack(r));say(`Skrócono. Do końca zadania: ${spokenDur(left,'nom')}. ${slackSpoken(r)}`)}
 /* Start z opóźnieniem: zeruje timer bieżącego zadania (pełny czas od teraz) */
-function restartTask(){const r=S.run;if(!r||r.asking)return;ensurePlanEnds(r);const it=r.items[r.idx];
+function restartTask(){const r=S.run;if(!r||r.asking)return;ensurePlanEnds(r);const it=r.items[r.idx];it.aStart=Date.now();
   it.sec=it.orig||it.sec;r.taskStart=Date.now();r.warned=false;r.half=false;r.lateMsg='';save();renderGuard();tone(990,.12);
   r.lastSlack=slackMin(finalSlack(r));say(`Start: ${curName()}. Masz ${spokenDur(it.sec)}. ${slackSpoken(r)}`)}
 /* ===== Sprawdzanie dojazdu w trakcie pilnowania (co 5 min) ===== */
@@ -537,12 +537,32 @@ function openTravelHistory(){const r=S.run;const L=(r&&r.travelChecks||[]).slice
     :'<p class="mut">Jeszcze nie sprawdzano.</p>'}
   <div class="row" style="margin-top:12px"><button class="grow" onclick="closeSheet()">Zamknij</button><button class="pri grow" onclick="closeSheet();checkTravel(true)" ${S.settings.apiKey?'':'disabled'}>Sprawdź teraz</button></div>`)}
 
+/* ===== Przebieg planu: oryginalny plan (p0s–p0e) vs rzeczywistość (aStart–aEnd) ===== */
+function ensureP0(r){ensurePlanEnds(r);r.items.forEach(i=>{if(i.p0e==null){i.p0e=i.planEnd;i.p0s=i.planEnd-(i.orig||i.sec)*1000}})}
+let progOpen=false;
+function toggleProgress(){progOpen=!progOpen;const b=$('progBody');if(b)b.style.display=progOpen?'block':'none';const a=$('progArrow');if(a)a.textContent=progOpen?'▾':'▸'}
+function progressHtml(r,open){ensureP0(r);const done=r.asking?r.items.length:r.idx;const now=Date.now();
+  const rows=r.items.map((it,i)=>{const t=S.tasks.find(x=>x.id===it.taskId);const nm=(t&&t.type==='travel'?'🚗 ':'')+esc(t?t.name:'?');
+    const st=i<done?'done':i===done&&!r.asking?'cur':'todo';const pDur=it.orig||it.sec;
+    let act='';
+    if(st==='done'){const ad=(it.aEnd-it.aStart)/1000,diff=Math.round((ad-pDur)/60),lateEnd=Math.round((it.aEnd-it.p0e)/60000);
+      act=`<div style="font-size:13px">Wykonano: <b>${hhmm(it.aStart)}–${hhmm(it.aEnd)}</b> · <b>${fmtMin(ad)}</b>
+        <span style="color:${diff>0?'var(--bad)':diff<0?'var(--ok)':'var(--mut)'}">${diff>0?`+${diff} min`:diff<0?`${diff} min`:'±0'}</span>
+        ${lateEnd>0?`<span class="mut">· koniec +${lateEnd} min</span>`:''}</div>`}
+    else if(st==='cur'){const end=r.taskStart+it.sec*1000;act=`<div style="font-size:13px;color:var(--acc)">Trwa od <b>${hhmm(it.aStart||r.taskStart)}</b> · koniec ok. <b>${hhmm(end)}</b>${it.sec!==pDur?` · teraz ${fmtMin(it.sec)}`:''}</div>`}
+    else if(it.sec!==pDur){act=`<div style="font-size:13px;color:var(--warn)">Po zmianach: ${fmtMin(it.sec)}</div>`}
+    return `<div class="pitem" style="align-items:flex-start;${st==='cur'?'background:#0c4a6e55;border-radius:10px;padding:8px;margin:2px -8px;border:1px solid var(--acc)':''}${st==='done'?'opacity:.85':''}">
+      <span style="font-size:18px;width:24px;text-align:center">${st==='done'?'✅':st==='cur'?'▶️':'⚪'}</span>
+      <div class="grow"><div style="font-weight:600">${nm}${st==='cur'?' <span class="pill" style="background:var(--acc);color:#04263a">teraz</span>':''}</div>
+        <div class="mut" style="font-size:13px">Plan: ${hhmm(it.p0s)}–${hhmm(it.p0e)} · ${fmtMin(pDur)}</div>${act}</div></div>`}).join('');
+  return `<div class="card"><div class="row" onclick="toggleProgress()" style="cursor:pointer"><b class="grow">📋 Przebieg planu</b><span class="mut">${Math.min(done,r.items.length)}/${r.items.length} zakończone</span><span id="progArrow" style="font-size:18px;width:20px;text-align:center">${open?'▾':'▸'}</span></div>
+    <div id="progBody" style="display:${open?'block':'none'};margin-top:6px">${rows}</div></div>`}
 function guardDone(){if(!S.run||S.run.asking)return;nextTask(true)}
 function nextTask(manual){const r=S.run;const it=r.items[r.idx];const actual=(Date.now()-r.taskStart)/1000;
   if(manual&&S.settings.learn&&actual>5){const t=S.tasks.find(x=>x.id===it.taskId);if(t)t.samples.push({sec:Math.round(actual),ts:Date.now(),src:'guard'})}
   if(!manual)beepLong();else tone(660,.2);
   const over=Date.now()-it.planEnd;r.lateMsg=over>=30000?`Przekroczono plan o ${lateSpoken(over)}.`:'';
-  r.idx++;r.taskStart=Date.now();r.warned=false;r.half=false;r.planMsg='';save();
+  it.aEnd=Date.now();if(!it.aStart)it.aStart=r.taskStart;r.idx++;r.taskStart=Date.now();if(r.items[r.idx])r.items[r.idx].aStart=r.taskStart;r.warned=false;r.half=false;r.planMsg='';save();
   if(r.idx>=r.items.length){askFinish();return}
   setTimeout(announce,manual?300:1800);renderGuard()}
 function askFinish(){const r=S.run;r.asking=true;r.finished=Date.now();save();renderGuard();
@@ -558,7 +578,7 @@ function renderGuard(){const el=$('guard');const r=S.run;setTimeout(()=>el.query
       :`<div class="card" style="text-align:center"><p>Brak aktywnego budzika.</p><button class="pri" style="width:100%;padding:14px" onclick="go('plan')">🗓️ Do planów</button></div>`)
       +(ready.length?`<div class="card"><div class="mut">Zacznij plan teraz</div>${ready.map(p=>`<div class="pitem"><span class="grow">${esc(p.name)} <span class="mut">${fmtMin(planTotal(p))}</span></span><button onclick="startRun('${p.id}',null,false)">▶</button></div>`).join('')}</div>`:'');return}
   if(r.asking){el.innerHTML=`<div class="card" style="text-align:center;padding:30px 14px"><div style="font-size:60px">🏁</div><h2>Czy zdążyłeś?</h2><p class="mut">Termin: ${hhmm(r.deadline)} · koniec zadań: ${hhmm(r.finished)}</p>${(()=>{const fm=slackMin(r.deadline-r.finished);return `<div style="font-size:30px;font-weight:800;margin:6px 0 14px;color:${fm<0?'var(--bad)':'var(--ok)'}">${fm>0?`Zapas ${fm} min`:fm<0?`Opóźnienie ${-fm} min`:'Dokładnie na czas'}</div>`})()}
-    <div class="row"><button class="ok grow" style="padding:18px;font-size:20px" onclick="finishRun(true)">Tak 👍</button><button class="bad grow" style="padding:18px;font-size:20px" onclick="finishRun(false)">Nie 👎</button></div></div>`;return}
+    <div class="row"><button class="ok grow" style="padding:18px;font-size:20px" onclick="finishRun(true)">Tak 👍</button><button class="bad grow" style="padding:18px;font-size:20px" onclick="finishRun(false)">Nie 👎</button></div></div>`+progressHtml(r,true);return}
   ensurePlanEnds(r);const it=r.items[r.idx];const nx=r.items[r.idx+1];const nt=nx&&S.tasks.find(x=>x.id===nx.taskId);
   el.innerHTML=`${r.lateMsg?`<div class="card" style="background:#7f1d1d;color:#fff;text-align:center;margin-top:0">⚠️ ${esc(r.lateMsg)}</div>`:''}${r.planMsg?`<div class="card" style="background:#78350f;color:#fff;text-align:center;margin-top:0" onclick="openTravelHistory()">🔄 ${esc(r.planMsg)}</div>`:''}
   <div style="text-align:center"><div class="mut">Zadanie ${r.idx+1} z ${r.items.length}</div><h2 style="font-size:28px;margin:4px 0">${esc(curName())}</h2>
@@ -573,7 +593,8 @@ function renderGuard(){const el=$('guard');const r=S.run;setTimeout(()=>el.query
   <div id="gTravel"></div>
   <div class="card" id="gFinalCard" style="text-align:center;padding:12px"><div class="mut">Na koniec planu (termin ${hhmm(r.deadline)})</div><div id="gFinal" style="font-size:34px;font-weight:800;line-height:1.15;font-variant-numeric:tabular-nums">–</div><div class="mut" id="gFinalSub"></div></div>
   <div class="card"><div class="row"><div class="grow"><div class="mut">Następne</div><b>${nt?esc(nt.name):'— koniec —'}</b></div>${nx?`<div style="text-align:right"><div class="mut">Czas</div><b>${fmtMin(nx.sec)}</b></div>`:''}</div></div>
-  <button class="ghost" style="width:100%" onclick="abortRun()">Przerwij</button>`;renderTravelCard();tick()}
+  <button class="ghost" style="width:100%" onclick="abortRun()">Przerwij</button>`;
+  el.querySelector('button[onclick="abortRun()"]').insertAdjacentHTML('beforebegin',progressHtml(r,progOpen));renderTravelCard();tick()}
 
 /* ========== HISTORIA ========== */
 function renderHome(){
